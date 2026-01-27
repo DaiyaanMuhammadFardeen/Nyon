@@ -35,6 +35,14 @@ void GameApplication::OnStart()
     m_PlayerBody.mass = 1.0f;
     m_PlayerBody.isStatic = false;
     
+    // Define player as a square polygon for SAT collision
+    m_PlayerShape = {
+        Nyon::Math::Vector2(0.0f, 0.0f),           // bottom-left
+        Nyon::Math::Vector2(m_PlayerSize.x, 0.0f), // bottom-right
+        Nyon::Math::Vector2(m_PlayerSize.x, m_PlayerSize.y), // top-right
+        Nyon::Math::Vector2(0.0f, m_PlayerSize.y)  // top-left
+    };
+    
     m_PlayerSize = Nyon::Math::Vector2(32.0f, 32.0f);
     m_PlayerColor = Nyon::Math::Vector3(0.0f, 0.8f, 1.0f); // Cyan
     m_IsGrounded = false;
@@ -45,6 +53,14 @@ void GameApplication::OnStart()
     m_PlatformBody.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
     m_PlatformBody.mass = 1.0f;
     m_PlatformBody.isStatic = true; // Platform doesn't move
+    
+    // Define platform as a rectangle polygon for SAT collision
+    m_PlatformShape = {
+        Nyon::Math::Vector2(0.0f, 0.0f),                      // bottom-left
+        Nyon::Math::Vector2(m_PlatformSize.x, 0.0f),          // bottom-right
+        Nyon::Math::Vector2(m_PlatformSize.x, m_PlatformSize.y), // top-right
+        Nyon::Math::Vector2(0.0f, m_PlatformSize.y)           // top-left
+    };
     
     m_PlatformSize = Nyon::Math::Vector2(400.0f, 32.0f);
     m_PlatformColor = Nyon::Math::Vector3(0.6f, 0.4f, 0.2f); // Brown
@@ -75,16 +91,21 @@ void GameApplication::HandleInput(float deltaTime)
 {
     std::cerr << "[DEBUG] GameApplication::HandleInput() called" << std::endl;
     
-    // Move 1 pixel per frame when keys are pressed (ignoring deltaTime for pixel-perfect movement)
+    // Move based on PLAYER_SPEED when keys are pressed
     if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_LEFT))
     {
-        std::cerr << "[DEBUG] Moving left 1 pixel" << std::endl;
-        m_PlayerBody.position.x -= 1.0f;
+        std::cerr << "[DEBUG] Moving left" << std::endl;
+        m_PlayerBody.velocity.x = -PLAYER_SPEED;
     }
     else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_RIGHT))
     {
-        std::cerr << "[DEBUG] Moving right 1 pixel" << std::endl;
-        m_PlayerBody.position.x += 1.0f;
+        std::cerr << "[DEBUG] Moving right" << std::endl;
+        m_PlayerBody.velocity.x = PLAYER_SPEED;
+    }
+    else
+    {
+        // Stop horizontal movement when no keys are pressed
+        m_PlayerBody.velocity.x = 0.0f;
     }
     
     // Jumping
@@ -107,15 +128,11 @@ void GameApplication::UpdatePhysics(float deltaTime)
     std::cerr << "[DEBUG] GameApplication::UpdatePhysics() called" << std::endl;
     std::cerr << "[DEBUG] Before physics - Player position: (" << m_PlayerBody.position.x << ", " << m_PlayerBody.position.y << ")" << std::endl;
     
-    // Apply gravity to player (only if not using pixel movement for horizontal)
-    if (!(Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_LEFT) ||
-          Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_RIGHT))) {
-        // Only apply gravity when not doing manual pixel movement (for vertical movement)
-        Nyon::Utils::Physics::ApplyGravity(m_PlayerBody);
-    }
+    // Apply gravity to player
+    Nyon::Utils::Physics::ApplyGravity(m_PlayerBody);
     
-    // Update vertical physics with velocity (for gravity and jumping)
-    m_PlayerBody.velocity.y += Nyon::Utils::Physics::Gravity * deltaTime;
+    // Apply velocity to position
+    m_PlayerBody.position.x += m_PlayerBody.velocity.x * deltaTime;
     m_PlayerBody.position.y += m_PlayerBody.velocity.y * deltaTime;
     
     // Boundary checks to prevent going off-screen
@@ -138,12 +155,12 @@ void GameApplication::UpdatePhysics(float deltaTime)
         m_IsGrounded = false; // Reset grounded if not on ground
     }
     
-    // Check for platform collision
-    if (Nyon::Utils::Physics::CheckCollision(
-            m_PlayerBody, m_PlayerSize,
-            m_PlatformBody, m_PlatformSize))
+    // Check for platform collision using SAT collision detection
+    if (Nyon::Utils::Physics::CheckPolygonCollision(
+            m_PlayerShape, m_PlayerBody.position,
+            m_PlatformShape, m_PlatformBody.position))
     {
-        std::cerr << "[DEBUG] Platform collision detected!" << std::endl;
+        std::cerr << "[DEBUG] Platform collision detected with SAT!" << std::endl;
         
         // Calculate overlap in both directions to determine best response
         float overlapTop = (m_PlayerBody.position.y + m_PlayerSize.y) - m_PlatformBody.position.y;
@@ -154,6 +171,9 @@ void GameApplication::UpdatePhysics(float deltaTime)
         // Find smallest overlap to resolve collision properly
         float minOverlapX = std::min(overlapLeft, overlapRight);
         float minOverlapY = std::min(overlapTop, overlapBottom);
+        
+        // Use a small epsilon to avoid precision issues
+        const float epsilon = 0.1f;
         
         if (minOverlapY < minOverlapX) {
             // Vertical collision is smaller - resolve vertically
@@ -174,10 +194,12 @@ void GameApplication::UpdatePhysics(float deltaTime)
             if (overlapLeft < overlapRight) {
                 // Collision from right - player came from right
                 m_PlayerBody.position.x = m_PlatformBody.position.x - m_PlayerSize.x;
+                m_PlayerBody.velocity.x = 0.0f;
                 std::cerr << "[DEBUG] Hitting platform from right" << std::endl;
             } else {
                 // Collision from left - player came from left
                 m_PlayerBody.position.x = m_PlatformBody.position.x + m_PlatformSize.x;
+                m_PlayerBody.velocity.x = 0.0f;
                 std::cerr << "[DEBUG] Hitting platform from left" << std::endl;
             }
         }
