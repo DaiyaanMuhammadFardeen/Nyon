@@ -5,6 +5,7 @@
 #include "nyon/math/Vector3.h"
 #include "nyon/utils/InputManager.h"
 #include "nyon/utils/Physics.h"
+#include <vector>
 
 class GameApplication : public Nyon::Application
 {
@@ -22,12 +23,14 @@ private:
     
     // Player properties
     Nyon::Utils::Physics::Body m_PlayerBody;
+    Nyon::Utils::Physics::Polygon m_PlayerShape;  // Polygon representation for SAT collision
     Nyon::Math::Vector2 m_PlayerSize;
     Nyon::Math::Vector3 m_PlayerColor;
     bool m_IsGrounded;
     
     // Platform properties
     Nyon::Utils::Physics::Body m_PlatformBody;
+    Nyon::Utils::Physics::Polygon m_PlatformShape;  // Polygon representation for SAT collision
     Nyon::Math::Vector2 m_PlatformSize;
     Nyon::Math::Vector3 m_PlatformColor;
     
