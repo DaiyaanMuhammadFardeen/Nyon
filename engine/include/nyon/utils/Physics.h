@@ -24,6 +24,17 @@ namespace Nyon::Utils
         // Define a polygon as a collection of vertices
         using Polygon = std::vector<Math::Vector2>;
         
+        // Result of collision detection with MTV (Minimum Translation Vector)
+        struct CollisionResult {
+            bool collided;
+            Math::Vector2 overlapAxis;  // Direction to push object to resolve collision
+            float overlapAmount;        // Distance to push object to resolve collision
+            
+            CollisionResult() : collided(false), overlapAxis(0.0f, 0.0f), overlapAmount(0.0f) {}
+            CollisionResult(bool coll, const Math::Vector2& axis, float amount) 
+                : collided(coll), overlapAxis(axis), overlapAmount(amount) {}
+        };
+        
         // Deprecated: Use UpdateBody instead which handles gravity internally
         static void ApplyGravity(Body& body);
         // Physics integration function that applies gravity and other forces
@@ -31,9 +42,12 @@ namespace Nyon::Utils
         static void UpdateBody(Body& body, float deltaTime);
         static bool CheckCollision(const Body& body1, const Math::Vector2& size1, 
                                   const Body& body2, const Math::Vector2& size2);
+        // Broad-phase collision check before SAT
+        static bool CheckAABBCollision(const Math::Vector2& pos1, const Math::Vector2& size1,
+                                      const Math::Vector2& pos2, const Math::Vector2& size2);
         // New SAT-based collision detection functions
-        static bool CheckPolygonCollision(const Polygon& poly1, const Math::Vector2& pos1,
-                                         const Polygon& poly2, const Math::Vector2& pos2);
+        static CollisionResult CheckPolygonCollision(const Polygon& poly1, const Math::Vector2& pos1,
+                                                   const Polygon& poly2, const Math::Vector2& pos2);
         
     private:
         // Helper functions for SAT algorithm
