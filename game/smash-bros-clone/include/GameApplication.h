@@ -38,6 +38,9 @@ private:
     Nyon::Math::Vector2 m_PlatformSize;
     Nyon::Math::Vector3 m_PlatformColor;
     
+    // Previous frame position for collision response
+    Nyon::Math::Vector2 m_PreviousPlayerPosition;
+    
     // Game constants
     static constexpr float PLAYER_SPEED = 300.0f;
     static constexpr float JUMP_FORCE = -400.0f;
