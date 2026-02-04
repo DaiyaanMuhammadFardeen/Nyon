@@ -13,16 +13,24 @@ namespace Nyon::Utils
         // Gravity is now applied directly in UpdateBody to avoid accumulation
     }
     
-    void Physics::UpdateBody(Body& body, float deltaTime)
+    void Physics::UpdateBody(Body& body, float deltaTime, bool isGrounded)
     {
         if (!body.isStatic)
         {
-            // Apply gravity directly to velocity instead of accumulating acceleration
-            body.velocity.y += Gravity * deltaTime;
-            
             // Apply other accelerations to velocity
             body.velocity.x += body.acceleration.x * deltaTime;
             body.velocity.y += body.acceleration.y * deltaTime;
+            
+            // Apply gravity only if not grounded
+            if (!isGrounded) {
+                body.velocity.y += Gravity * deltaTime;
+            } else {
+                // When grounded, clamp vertical velocity to prevent sinking
+                // Allow tiny downward bias to maintain contact with surface
+                if (body.velocity.y > 0.0f) {
+                    body.velocity.y = 0.0f;
+                }
+            }
             
             // Apply velocity to position (Symplectic Euler)
             body.position.x += body.velocity.x * deltaTime;
