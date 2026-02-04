@@ -1,4 +1,4 @@
-#include "GameApplication.h"
+#include"GameApplication.h"
 #include "nyon/graphics/Renderer2D.h"
 #include <iostream>
 
@@ -21,12 +21,12 @@ void GameApplication::OnStart()
     std::cerr << "[DEBUG] Initializing InputManager with window: " << GetWindow() << std::endl;
     Nyon::Utils::InputManager::Init(GetWindow());
     
-    // Verify the window is valid
+    // Verify the window isvalid
     if (GetWindow() == nullptr) {
         std::cerr << "[ERROR] GameApplication::OnStart() - window is null!" << std::endl;
     } else {
         std::cerr << "[DEBUG] GameApplication::OnStart() - window is valid" << std::endl;
-    }
+   }
     
     // Initialize player - starting position above the platform
     m_CurrentPlayerBody.position = Nyon::Math::Vector2(500.0f, 400.0f);
@@ -35,12 +35,12 @@ void GameApplication::OnStart()
     m_CurrentPlayerBody.mass = 1.0f;
     m_CurrentPlayerBody.isStatic = false;
     
-    // Set previous state equal to current state initially
-    m_PreviousPlayerBody = m_CurrentPlayerBody;
+    // Set previous state equal to current state initiallym_PreviousPlayerBody = m_CurrentPlayerBody;
+    m_PreviousPlayerPosition = m_CurrentPlayerBody.position;
     
     // Define player as a square polygon for SAT collision
     m_PlayerShape = {
-        Nyon::Math::Vector2(0.0f, 0.0f),           // bottom-left
+        Nyon::Math::Vector2(0.0f, 0.0f),// bottom-left
         Nyon::Math::Vector2(m_PlayerSize.x, 0.0f), // bottom-right
         Nyon::Math::Vector2(m_PlayerSize.x, m_PlayerSize.y), // top-right
         Nyon::Math::Vector2(0.0f, m_PlayerSize.y)  // top-left
@@ -55,21 +55,21 @@ void GameApplication::OnStart()
     m_CurrentPlatformBody.velocity = Nyon::Math::Vector2(0.0f, 0.0f);
     m_CurrentPlatformBody.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
     m_CurrentPlatformBody.mass = 1.0f;
-    m_CurrentPlatformBody.isStatic = true; // Platform doesn't move
+    m_CurrentPlatformBody.isStatic = true; // Platform doesn'tmove
     
     // Set previous state equal to current state initially
     m_PreviousPlatformBody = m_CurrentPlatformBody;
     
     // Define platform as a rectangle polygon for SAT collision
     m_PlatformShape = {
-        Nyon::Math::Vector2(0.0f, 0.0f),                      // bottom-left
+        Nyon::Math::Vector2(0.0f, 0.0f),// bottom-left
         Nyon::Math::Vector2(m_PlatformSize.x, 0.0f),          // bottom-right
         Nyon::Math::Vector2(m_PlatformSize.x, m_PlatformSize.y), // top-right
         Nyon::Math::Vector2(0.0f, m_PlatformSize.y)           // top-left
     };
     
     m_PlatformSize = Nyon::Math::Vector2(400.0f, 32.0f);
-    m_PlatformColor = Nyon::Math::Vector3(0.6f, 0.4f, 0.2f); // Brown
+    m_PlatformColor = Nyon::Math::Vector3(0.6f, 0.4f,0.2f); // Brown
     
     std::cerr << "[DEBUG] GameApplication::OnStart() completed" << std::endl;
 }
@@ -92,7 +92,7 @@ void GameApplication::OnFixedUpdate(float deltaTime)
     
     // Update input
     std::cerr << "[DEBUG] Calling InputManager::Update()" << std::endl;
-    Nyon::Utils::InputManager::Update();
+Nyon::Utils::InputManager::Update();
     
     // Handle player input
     std::cerr << "[DEBUG] Calling HandleInput()" << std::endl;
@@ -100,14 +100,14 @@ void GameApplication::OnFixedUpdate(float deltaTime)
     
     // Update physics
     std::cerr << "[DEBUG] Calling UpdatePhysics()" << std::endl;
-    UpdatePhysics(deltaTime);
+   UpdatePhysics(deltaTime);
     
     std::cerr << "[DEBUG] GameApplication::OnFixedUpdate() completed" << std::endl;
 }
 
 void GameApplication::OnInterpolateAndRender(float alpha)
 {
-    std::cerr << "[DEBUG] GameApplication::OnInterpolateAndRender() called with alpha: " << alpha << std::endl;
+    std::cerr << "[DEBUG] GameApplication::OnInterpolateAndRender() called with alpha: " <<alpha << std::endl;
     
     // Clear screen
     glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
@@ -143,14 +143,14 @@ void GameApplication::OnInterpolateAndRender(float alpha)
 void GameApplication::OnRender()
 {
     // This method is kept for backward compatibility, but the interpolation render method is used instead
-    std::cerr << "[DEBUG] GameApplication::OnRender() called (compatibility)" << std::endl;
+    std::cerr << "[DEBUG] GameApplication::OnRender() called(compatibility)" << std::endl;
 }
 
 Nyon::Math::Vector2 GameApplication::interpolatePosition(const Nyon::Utils::Physics::Body& prev, 
                                                         const Nyon::Utils::Physics::Body& curr, 
                                                         float alpha) const
 {
-    // Linear interpolation between previous and current position
+    // Linear interpolation between previous and currentposition
     return Nyon::Math::Vector2(
         prev.position.x * (1.0f - alpha) + curr.position.x * alpha,
         prev.position.y * (1.0f - alpha) + curr.position.y * alpha
@@ -159,7 +159,7 @@ Nyon::Math::Vector2 GameApplication::interpolatePosition(const Nyon::Utils::Phys
 
 void GameApplication::HandleInput(float deltaTime)
 {
-    std::cerr << "[DEBUG] GameApplication::HandleInput() called" << std::endl;
+std::cerr << "[DEBUG] GameApplication::HandleInput() called" << std::endl;
     
     // Move based on PLAYER_SPEED when keys are pressed
     if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_LEFT))
@@ -178,17 +178,17 @@ void GameApplication::HandleInput(float deltaTime)
         m_CurrentPlayerBody.velocity.x = 0.0f;
     }
     
-    // Jumping
+// Jumping
     if ((Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_SPACE) || 
          Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_UP)) && m_IsGrounded)
     {
         std::cerr << "[DEBUG] Jumping" << std::endl;
-        // Apply jump impulse - reset vertical velocity to jump force
+        //Apply jump impulse - reset vertical velocity to jump force
         m_CurrentPlayerBody.velocity.y = JUMP_FORCE;
         m_IsGrounded = false;
     }
     
-    std::cerr << "[DEBUG] Player velocity: (" << m_CurrentPlayerBody.velocity.x << ", " << m_CurrentPlayerBody.velocity.y << ")" << std::endl;
+    std::cerr << "[DEBUG] Player velocity: (" << m_CurrentPlayerBody.velocity.x << ", " << m_CurrentPlayerBody.velocity.y << ")"<< std::endl;
     std::cerr << "[DEBUG] Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
     
     std::cerr << "[DEBUG] GameApplication::HandleInput() completed" << std::endl;
@@ -197,9 +197,9 @@ void GameApplication::HandleInput(float deltaTime)
 void GameApplication::UpdatePhysics(float deltaTime)
 {
     std::cerr << "[DEBUG] GameApplication::UpdatePhysics() called" << std::endl;
-    std::cerr << "[DEBUG] Before physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
+    std::cerr << "[DEBUG] Before physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" <<std::endl;
     
-    // Apply physics using the corrected UpdateBody method which handles gravity internally
+    //Apply physics using the corrected UpdateBody method which handles gravity internally
     // This method properly applies gravity to velocity without accumulating acceleration
     Nyon::Utils::Physics::UpdateBody(m_CurrentPlayerBody, deltaTime);
     
@@ -215,7 +215,7 @@ void GameApplication::UpdatePhysics(float deltaTime)
     if (m_CurrentPlayerBody.position.y + m_PlayerSize.y >= 650.0f) // Ground level
     {
         m_CurrentPlayerBody.position.y = 650.0f - m_PlayerSize.y;
-        m_CurrentPlayerBody.velocity.y = 0.0f;
+m_CurrentPlayerBody.velocity.y = 0.0f;
         m_IsGrounded = true;
     }
     else
@@ -227,56 +227,52 @@ void GameApplication::UpdatePhysics(float deltaTime)
         }
     }
     
-    // Check for platform collision using SAT collision detection
-    if (Nyon::Utils::Physics::CheckPolygonCollision(
-            m_PlayerShape, m_CurrentPlayerBody.position,
-            m_PlatformShape, m_CurrentPlatformBody.position))
+    // Broad-phase collision check first to avoid expensive SAT when objects are far apart
+    if (Nyon::Utils::Physics::CheckAABBCollision(m_CurrentPlayerBody.position, m_PlayerSize,
+                                                 m_CurrentPlatformBody.position, m_PlatformSize))
     {
-        std::cerr << "[DEBUG] Platform collision detected with SAT!" << std::endl;
+        // Only run SAT collision detection if the broad-phase check passes
+        auto collisionResult = Nyon::Utils::Physics::CheckPolygonCollision(
+                m_PlayerShape, m_CurrentPlayerBody.position,
+                m_PlatformShape, m_CurrentPlatformBody.position);
         
-        // Calculate overlap in both directions to determine best response
-        float overlapTop = (m_CurrentPlayerBody.position.y + m_PlayerSize.y) - m_CurrentPlatformBody.position.y;
-        float overlapBottom = (m_CurrentPlatformBody.position.y + m_PlatformSize.y) - m_CurrentPlayerBody.position.y;
-        float overlapLeft = (m_CurrentPlayerBody.position.x + m_PlayerSize.x) - m_CurrentPlatformBody.position.x;
-        float overlapRight = (m_CurrentPlatformBody.position.x + m_PlatformSize.x) - m_CurrentPlayerBody.position.x;
-        
-        // Find smallest overlap to resolve collision properly
-        float minOverlapX = std::min(overlapLeft, overlapRight);
-        float minOverlapY = std::min(overlapTop, overlapBottom);
-        
-        // Use a small epsilon to avoid precision issues
-        const float epsilon = 0.1f;
-        
-        if (minOverlapY < minOverlapX) {
-            // Vertical collision is smaller - resolve vertically
-            if (overlapTop < overlapBottom) {
-                // Collision from top - player landed on platform
-                m_CurrentPlayerBody.position.y = m_CurrentPlatformBody.position.y - m_PlayerSize.y;
+        if (collisionResult.collided)
+        {
+           std::cerr << "[DEBUG] Platform collision detected with SAT!" << std::endl;
+            
+            // Calculate relative velocity to determine collision direction
+            float relVelY = m_CurrentPlayerBody.velocity.y;
+            bool isFalling = relVelY > 0;
+            bool isRising = relVelY <0;
+            
+            // Determine if the collision is from above (landing) or below (hitting underside)
+            // We only want to land if we're falling onto the platform from above
+            bool wasAbove = m_PreviousPlayerPosition.y + m_PlayerSize.y <= m_CurrentPlatformBody.position.y + 0.1f;
+           bool isTopCollision = isFalling && wasAbove;
+            
+            if (isTopCollision) {
+                // Land on top of platform - resolve using MTV
+                m_CurrentPlayerBody.position.y -= collisionResult.overlapAmount * collisionResult.overlapAxis.y;
                 m_CurrentPlayerBody.velocity.y = 0.0f;
                 m_IsGrounded = true;
                 std::cerr << "[DEBUG] Landing on platform from top" << std::endl;
-            } else {
-                // Collision from bottom - player hit platform from below
-                m_CurrentPlayerBody.position.y = m_CurrentPlatformBody.position.y + m_PlatformSize.y;
+            } else if (collisionResult.overlapAxis.y < 0) {
+                // Hit platform from below - push player down
+                m_CurrentPlayerBody.position.y -=collisionResult.overlapAmount * collisionResult.overlapAxis.y;
                 m_CurrentPlayerBody.velocity.y = 0.0f;
                 std::cerr << "[DEBUG] Hitting platform from bottom" << std::endl;
-            }
-        } else {
-            // Horizontal collision is smaller - resolve horizontally
-            if (overlapLeft < overlapRight) {
-                // Collision from right - player came from right
-                m_CurrentPlayerBody.position.x = m_CurrentPlatformBody.position.x - m_PlayerSize.x;
+            } else if (abs(collisionResult.overlapAxis.y) < abs(collisionResult.overlapAxis.x)) {
+               // Horizontal collision is dominant - push player horizontally
+                m_CurrentPlayerBody.position.x -= collisionResult.overlapAmount * collisionResult.overlapAxis.x;
                 m_CurrentPlayerBody.velocity.x = 0.0f;
-                std::cerr << "[DEBUG] Hitting platform from right" << std::endl;
-            } else {
-                // Collision from left - player came from left
-                m_CurrentPlayerBody.position.x = m_CurrentPlatformBody.position.x + m_PlatformSize.x;
-                m_CurrentPlayerBody.velocity.x = 0.0f;
-                std::cerr << "[DEBUG] Hitting platform from left" << std::endl;
+                std::cerr << "[DEBUG] Hitting platform horizontally" << std::endl;
             }
-        }
+}
     }
     
-    std::cerr << "[DEBUG] After physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
-    std::cerr << "[DEBUG] GameApplication::UpdatePhysics() completed" << std::endl;
+    // Store current position for next frame collision detection
+    m_PreviousPlayerPosition = m_CurrentPlayerBody.position;
+    
+    std::cerr << "[DEBUG] After physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" <<std::endl;
+   std::cerr << "[DEBUG] GameApplication::UpdatePhysics() completed" << std::endl;
 }
