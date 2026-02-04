@@ -1,6 +1,7 @@
 #include "nyon/utils/Physics.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Nyon::Utils
 {
@@ -98,16 +99,38 @@ namespace Nyon::Utils
     // Check if two projected intervals overlap
     bool Physics::CheckOverlap(float min1, float max1, float min2, float max2)
     {
-        return !(max1 < min2 || max2 < min1);
+        const float epsilon = 0.0001f; // Small tolerance for floating-point precision
+        return !(max1 < min2 - epsilon || max2 < min1 - epsilon);
+    }
+    
+    // Broad-phase collision check before SAT
+    bool Physics::CheckAABBCollision(const Math::Vector2& pos1, const Math::Vector2& size1,
+                                    const Math::Vector2& pos2, const Math::Vector2& size2)
+    {
+        float x1 = pos1.x;
+        float y1 = pos1.y;
+        float w1 = size1.x;
+        float h1 = size1.y;
+        
+        float x2 = pos2.x;
+        float y2 = pos2.y;
+        float w2 = size2.x;
+        float h2 = size2.y;
+        
+        // Standard AABB collision detection
+        bool collisionX = x1 < x2 + w2 && x1 + w1 > x2;
+        bool collisionY = y1 < y2 + h2 && y1 + h1 > y2;
+        
+        return collisionX && collisionY;
     }
     
     // Main SAT-based collision detection function
-    bool Physics::CheckPolygonCollision(const Polygon& poly1, const Math::Vector2& pos1,
-                                       const Polygon& poly2, const Math::Vector2& pos2)
+    Physics::CollisionResult Physics::CheckPolygonCollision(const Polygon& poly1, const Math::Vector2& pos1,
+                                                           const Polygon& poly2, const Math::Vector2& pos2)
     {
         // Check if either polygon is empty
         if (poly1.empty() || poly2.empty()) {
-            return false;
+            return CollisionResult(false, Math::Vector2(0.0f, 0.0f), 0.0f);
         }
         
         // Get all potential separating axes from both polygons
@@ -141,6 +164,11 @@ namespace Nyon::Utils
             axes.push_back(normal);
         }
         
+        // Track the axis with the minimum overlap (MTV)
+        float minOverlap = std::numeric_limits<float>::max();
+        Math::Vector2 minAxis = Math::Vector2(0.0f, 0.0f);
+        bool foundSeparation = false;
+        
         // Check for separation along each axis
         for (const auto& axis : axes) {
             auto proj1 = ProjectPolygonOntoAxis(poly1, pos1, axis);
@@ -148,11 +176,21 @@ namespace Nyon::Utils
             
             // If projections don't overlap, we've found a separating axis
             if (!CheckOverlap(proj1.first, proj1.second, proj2.first, proj2.second)) {
-                return false; // No collision
+                return CollisionResult(false, Math::Vector2(0.0f, 0.0f), 0.0f); // No collision
+            }
+            
+            // Calculate the overlap amount
+            float overlap = std::min(proj1.second - proj2.first, proj2.second - proj1.first);
+            
+            // Update minimum translation vector if this is the smallest overlap
+            if (overlap < minOverlap) {
+                minOverlap = overlap;
+                minAxis = axis;
             }
         }
         
         // If we've checked all axes and found no separation, the polygons are colliding
-        return true;
+        // Return the MTV (axis with minimum overlap)
+        return CollisionResult(true, minAxis, minOverlap);
     }
 }
