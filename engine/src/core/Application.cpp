@@ -66,20 +66,39 @@ namespace Nyon
         // Call OnStart once before the main loop
         OnStart();
         
-        float lastFrame = static_cast<float>(glfwGetTime());
-        std::cerr << "[DEBUG] Initial lastFrame time: " << lastFrame << std::endl;
+        m_CurrentTime = glfwGetTime();
+        m_Accumulator = 0.0;
+        std::cerr << "[DEBUG] Initial current time: " << m_CurrentTime << std::endl;
 
         while (!glfwWindowShouldClose(m_Window) && m_Running)
         {
-            float currentFrame = static_cast<float>(glfwGetTime());
-            float deltaTime = currentFrame - lastFrame;
-            m_LastFrameTime = currentFrame;
+            double newTime = glfwGetTime();
+            double frameTime = newTime - m_CurrentTime;
+            m_CurrentTime = newTime;
 
-            std::cerr << "[DEBUG] Processing frame with delta time: " << deltaTime << std::endl;
-            
-            ProcessInput();
-            OnUpdate(deltaTime);
-            OnRender();
+            // Prevent spiral of death: cap the frame time
+            if (frameTime > MAX_FRAME_TIME)
+                frameTime = MAX_FRAME_TIME;
+
+            m_Accumulator += frameTime;
+
+            // --- PHYSICS UPDATE LOOP ---
+            // Consumes time from the accumulator in fixed chunks
+            while (m_Accumulator >= FIXED_TIMESTEP)
+            {
+                ProcessInput();
+                OnFixedUpdate(static_cast<float>(FIXED_TIMESTEP));
+                
+                // Advance simulation time
+                m_Accumulator -= FIXED_TIMESTEP;
+            }
+
+            // --- RENDER ---
+            // Calculate 'alpha': how far are we into the *next* physics frame?
+            // 0.0 = exactly at prev state, 1.0 = exactly at current state
+            double alpha = m_Accumulator / FIXED_TIMESTEP;
+
+            OnInterpolateAndRender(static_cast<float>(alpha));
 
             glfwSwapBuffers(m_Window);
             glfwPollEvents();
