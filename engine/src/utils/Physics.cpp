@@ -8,25 +8,26 @@ namespace Nyon::Utils
     
     void Physics::ApplyGravity(Body& body)
     {
-        if (!body.isStatic)
-        {
-            body.acceleration.y += Gravity;
-        }
+        // This function is kept for backward compatibility but should not be used
+        // Gravity is now applied directly in UpdateBody to avoid accumulation
     }
     
     void Physics::UpdateBody(Body& body, float deltaTime)
     {
         if (!body.isStatic)
         {
-            // Apply acceleration to velocity
+            // Apply gravity directly to velocity instead of accumulating acceleration
+            body.velocity.y += Gravity * deltaTime;
+            
+            // Apply other accelerations to velocity
             body.velocity.x += body.acceleration.x * deltaTime;
             body.velocity.y += body.acceleration.y * deltaTime;
             
-            // Apply velocity to position
+            // Apply velocity to position (Symplectic Euler)
             body.position.x += body.velocity.x * deltaTime;
             body.position.y += body.velocity.y * deltaTime;
             
-            // Reset acceleration after applying
+            // CRITICAL: Reset acceleration for the next frame
             body.acceleration.x = 0.0f;
             body.acceleration.y = 0.0f;
         }
@@ -47,7 +48,7 @@ namespace Nyon::Utils
         
         // Standard AABB collision detection
         bool collisionX = x1 < x2 + w2 && x1 + w1 > x2;
-        bool collisionY = y1 < y2 + h2 && y1 + h1 > y2;
+        bool collisionY = y1 < y2 + h2 && y1 + h1 > h2;
         
         return collisionX && collisionY;
     }
