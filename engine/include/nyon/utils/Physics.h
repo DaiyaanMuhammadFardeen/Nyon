@@ -24,7 +24,10 @@ namespace Nyon::Utils
         // Define a polygon as a collection of vertices
         using Polygon = std::vector<Math::Vector2>;
         
+        // Deprecated: Use UpdateBody instead which handles gravity internally
         static void ApplyGravity(Body& body);
+        // Physics integration function that applies gravity and other forces
+        // NOTE: This function resets acceleration to (0,0) at the end of the update
         static void UpdateBody(Body& body, float deltaTime);
         static bool CheckCollision(const Body& body1, const Math::Vector2& size1, 
                                   const Body& body2, const Math::Vector2& size2);
