@@ -183,6 +183,7 @@ void GameApplication::HandleInput(float deltaTime)
          Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_UP)) && m_IsGrounded)
     {
         std::cerr << "[DEBUG] Jumping" << std::endl;
+        // Apply jump impulse - reset vertical velocity to jump force
         m_CurrentPlayerBody.velocity.y = JUMP_FORCE;
         m_IsGrounded = false;
     }
@@ -198,12 +199,9 @@ void GameApplication::UpdatePhysics(float deltaTime)
     std::cerr << "[DEBUG] GameApplication::UpdatePhysics() called" << std::endl;
     std::cerr << "[DEBUG] Before physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
     
-    // Apply gravity to player
-    Nyon::Utils::Physics::ApplyGravity(m_CurrentPlayerBody);
-    
-    // Apply velocity to position
-    m_CurrentPlayerBody.position.x += m_CurrentPlayerBody.velocity.x * deltaTime;
-    m_CurrentPlayerBody.position.y += m_CurrentPlayerBody.velocity.y * deltaTime;
+    // Apply physics using the corrected UpdateBody method which handles gravity internally
+    // This method properly applies gravity to velocity without accumulating acceleration
+    Nyon::Utils::Physics::UpdateBody(m_CurrentPlayerBody, deltaTime);
     
     // Boundary checks to prevent going off-screen
     if (m_CurrentPlayerBody.position.x < 0) {
@@ -222,7 +220,11 @@ void GameApplication::UpdatePhysics(float deltaTime)
     }
     else
     {
-        m_IsGrounded = false; // Reset grounded if not on ground
+        // Check if player is not grounded based on position relative to platform
+        // Only set to not grounded if not colliding with platform and falling
+        if (m_CurrentPlayerBody.velocity.y > 0) { // Falling
+            m_IsGrounded = false;
+        }
     }
     
     // Check for platform collision using SAT collision detection
