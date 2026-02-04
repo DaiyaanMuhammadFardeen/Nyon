@@ -29,11 +29,14 @@ void GameApplication::OnStart()
     }
     
     // Initialize player - starting position above the platform
-    m_PlayerBody.position = Nyon::Math::Vector2(500.0f, 400.0f);
-    m_PlayerBody.velocity = Nyon::Math::Vector2(0.0f, 0.0f);
-    m_PlayerBody.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
-    m_PlayerBody.mass = 1.0f;
-    m_PlayerBody.isStatic = false;
+    m_CurrentPlayerBody.position = Nyon::Math::Vector2(500.0f, 400.0f);
+    m_CurrentPlayerBody.velocity = Nyon::Math::Vector2(0.0f, 0.0f);
+    m_CurrentPlayerBody.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
+    m_CurrentPlayerBody.mass = 1.0f;
+    m_CurrentPlayerBody.isStatic = false;
+    
+    // Set previous state equal to current state initially
+    m_PreviousPlayerBody = m_CurrentPlayerBody;
     
     // Define player as a square polygon for SAT collision
     m_PlayerShape = {
@@ -48,11 +51,14 @@ void GameApplication::OnStart()
     m_IsGrounded = false;
     
     // Initialize platform
-    m_PlatformBody.position = Nyon::Math::Vector2(400.0f, 500.0f);
-    m_PlatformBody.velocity = Nyon::Math::Vector2(0.0f, 0.0f);
-    m_PlatformBody.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
-    m_PlatformBody.mass = 1.0f;
-    m_PlatformBody.isStatic = true; // Platform doesn't move
+    m_CurrentPlatformBody.position = Nyon::Math::Vector2(400.0f, 500.0f);
+    m_CurrentPlatformBody.velocity = Nyon::Math::Vector2(0.0f, 0.0f);
+    m_CurrentPlatformBody.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
+    m_CurrentPlatformBody.mass = 1.0f;
+    m_CurrentPlatformBody.isStatic = true; // Platform doesn't move
+    
+    // Set previous state equal to current state initially
+    m_PreviousPlatformBody = m_CurrentPlatformBody;
     
     // Define platform as a rectangle polygon for SAT collision
     m_PlatformShape = {
@@ -70,7 +76,19 @@ void GameApplication::OnStart()
 
 void GameApplication::OnUpdate(float deltaTime)
 {
+    // This is for backward compatibility if someone calls it
     std::cerr << "[DEBUG] GameApplication::OnUpdate() called with delta time: " << deltaTime << std::endl;
+    HandleInput(deltaTime);
+    UpdatePhysics(deltaTime);
+}
+
+void GameApplication::OnFixedUpdate(float deltaTime)
+{
+    std::cerr << "[DEBUG] GameApplication::OnFixedUpdate() called with fixed delta time: " << deltaTime << std::endl;
+    
+    // Copy current state to previous state before physics update
+    m_PreviousPlayerBody = m_CurrentPlayerBody;
+    m_PreviousPlatformBody = m_CurrentPlatformBody;
     
     // Update input
     std::cerr << "[DEBUG] Calling InputManager::Update()" << std::endl;
@@ -84,7 +102,59 @@ void GameApplication::OnUpdate(float deltaTime)
     std::cerr << "[DEBUG] Calling UpdatePhysics()" << std::endl;
     UpdatePhysics(deltaTime);
     
-    std::cerr << "[DEBUG] GameApplication::OnUpdate() completed" << std::endl;
+    std::cerr << "[DEBUG] GameApplication::OnFixedUpdate() completed" << std::endl;
+}
+
+void GameApplication::OnInterpolateAndRender(float alpha)
+{
+    std::cerr << "[DEBUG] GameApplication::OnInterpolateAndRender() called with alpha: " << alpha << std::endl;
+    
+    // Clear screen
+    glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    // Begin rendering
+    Nyon::Graphics::Renderer2D::BeginScene();
+    
+    // Draw platform with interpolation
+    Nyon::Math::Vector2 interpolatedPlatformPos = interpolatePosition(m_PreviousPlatformBody, m_CurrentPlatformBody, alpha);
+    Nyon::Graphics::Renderer2D::DrawQuad(
+        interpolatedPlatformPos,
+        m_PlatformSize,
+        Nyon::Math::Vector2(0.0f, 0.0f),
+        m_PlatformColor
+    );
+    
+    // Draw player with interpolation
+    Nyon::Math::Vector2 interpolatedPlayerPos = interpolatePosition(m_PreviousPlayerBody, m_CurrentPlayerBody, alpha);
+    Nyon::Graphics::Renderer2D::DrawQuad(
+        interpolatedPlayerPos,
+        m_PlayerSize,
+        Nyon::Math::Vector2(0.0f, 0.0f),
+        m_PlayerColor
+    );
+    
+    // End rendering
+    Nyon::Graphics::Renderer2D::EndScene();
+    
+    std::cerr << "[DEBUG] GameApplication::OnInterpolateAndRender() completed" << std::endl;
+}
+
+void GameApplication::OnRender()
+{
+    // This method is kept for backward compatibility, but the interpolation render method is used instead
+    std::cerr << "[DEBUG] GameApplication::OnRender() called (compatibility)" << std::endl;
+}
+
+Nyon::Math::Vector2 GameApplication::interpolatePosition(const Nyon::Utils::Physics::Body& prev, 
+                                                        const Nyon::Utils::Physics::Body& curr, 
+                                                        float alpha) const
+{
+    // Linear interpolation between previous and current position
+    return Nyon::Math::Vector2(
+        prev.position.x * (1.0f - alpha) + curr.position.x * alpha,
+        prev.position.y * (1.0f - alpha) + curr.position.y * alpha
+    );
 }
 
 void GameApplication::HandleInput(float deltaTime)
@@ -95,17 +165,17 @@ void GameApplication::HandleInput(float deltaTime)
     if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_LEFT))
     {
         std::cerr << "[DEBUG] Moving left" << std::endl;
-        m_PlayerBody.velocity.x = -PLAYER_SPEED;
+        m_CurrentPlayerBody.velocity.x = -PLAYER_SPEED;
     }
     else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_RIGHT))
     {
         std::cerr << "[DEBUG] Moving right" << std::endl;
-        m_PlayerBody.velocity.x = PLAYER_SPEED;
+        m_CurrentPlayerBody.velocity.x = PLAYER_SPEED;
     }
     else
     {
         // Stop horizontal movement when no keys are pressed
-        m_PlayerBody.velocity.x = 0.0f;
+        m_CurrentPlayerBody.velocity.x = 0.0f;
     }
     
     // Jumping
@@ -113,12 +183,12 @@ void GameApplication::HandleInput(float deltaTime)
          Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_UP)) && m_IsGrounded)
     {
         std::cerr << "[DEBUG] Jumping" << std::endl;
-        m_PlayerBody.velocity.y = JUMP_FORCE;
+        m_CurrentPlayerBody.velocity.y = JUMP_FORCE;
         m_IsGrounded = false;
     }
     
-    std::cerr << "[DEBUG] Player velocity: (" << m_PlayerBody.velocity.x << ", " << m_PlayerBody.velocity.y << ")" << std::endl;
-    std::cerr << "[DEBUG] Player position: (" << m_PlayerBody.position.x << ", " << m_PlayerBody.position.y << ")" << std::endl;
+    std::cerr << "[DEBUG] Player velocity: (" << m_CurrentPlayerBody.velocity.x << ", " << m_CurrentPlayerBody.velocity.y << ")" << std::endl;
+    std::cerr << "[DEBUG] Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
     
     std::cerr << "[DEBUG] GameApplication::HandleInput() completed" << std::endl;
 }
@@ -126,28 +196,28 @@ void GameApplication::HandleInput(float deltaTime)
 void GameApplication::UpdatePhysics(float deltaTime)
 {
     std::cerr << "[DEBUG] GameApplication::UpdatePhysics() called" << std::endl;
-    std::cerr << "[DEBUG] Before physics - Player position: (" << m_PlayerBody.position.x << ", " << m_PlayerBody.position.y << ")" << std::endl;
+    std::cerr << "[DEBUG] Before physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
     
     // Apply gravity to player
-    Nyon::Utils::Physics::ApplyGravity(m_PlayerBody);
+    Nyon::Utils::Physics::ApplyGravity(m_CurrentPlayerBody);
     
     // Apply velocity to position
-    m_PlayerBody.position.x += m_PlayerBody.velocity.x * deltaTime;
-    m_PlayerBody.position.y += m_PlayerBody.velocity.y * deltaTime;
+    m_CurrentPlayerBody.position.x += m_CurrentPlayerBody.velocity.x * deltaTime;
+    m_CurrentPlayerBody.position.y += m_CurrentPlayerBody.velocity.y * deltaTime;
     
     // Boundary checks to prevent going off-screen
-    if (m_PlayerBody.position.x < 0) {
-        m_PlayerBody.position.x = 0;
+    if (m_CurrentPlayerBody.position.x < 0) {
+        m_CurrentPlayerBody.position.x = 0;
     }
-    if (m_PlayerBody.position.x + m_PlayerSize.x > 1280) { // Assuming window width is 1280
-        m_PlayerBody.position.x = 1280 - m_PlayerSize.x;
+    if (m_CurrentPlayerBody.position.x + m_PlayerSize.x > 1280) { // Assuming window width is 1280
+        m_CurrentPlayerBody.position.x = 1280 - m_PlayerSize.x;
     }
     
     // Check for ground collision (floor)
-    if (m_PlayerBody.position.y + m_PlayerSize.y >= 650.0f) // Ground level
+    if (m_CurrentPlayerBody.position.y + m_PlayerSize.y >= 650.0f) // Ground level
     {
-        m_PlayerBody.position.y = 650.0f - m_PlayerSize.y;
-        m_PlayerBody.velocity.y = 0.0f;
+        m_CurrentPlayerBody.position.y = 650.0f - m_PlayerSize.y;
+        m_CurrentPlayerBody.velocity.y = 0.0f;
         m_IsGrounded = true;
     }
     else
@@ -157,16 +227,16 @@ void GameApplication::UpdatePhysics(float deltaTime)
     
     // Check for platform collision using SAT collision detection
     if (Nyon::Utils::Physics::CheckPolygonCollision(
-            m_PlayerShape, m_PlayerBody.position,
-            m_PlatformShape, m_PlatformBody.position))
+            m_PlayerShape, m_CurrentPlayerBody.position,
+            m_PlatformShape, m_CurrentPlatformBody.position))
     {
         std::cerr << "[DEBUG] Platform collision detected with SAT!" << std::endl;
         
         // Calculate overlap in both directions to determine best response
-        float overlapTop = (m_PlayerBody.position.y + m_PlayerSize.y) - m_PlatformBody.position.y;
-        float overlapBottom = (m_PlatformBody.position.y + m_PlatformSize.y) - m_PlayerBody.position.y;
-        float overlapLeft = (m_PlayerBody.position.x + m_PlayerSize.x) - m_PlatformBody.position.x;
-        float overlapRight = (m_PlatformBody.position.x + m_PlatformSize.x) - m_PlayerBody.position.x;
+        float overlapTop = (m_CurrentPlayerBody.position.y + m_PlayerSize.y) - m_CurrentPlatformBody.position.y;
+        float overlapBottom = (m_CurrentPlatformBody.position.y + m_PlatformSize.y) - m_CurrentPlayerBody.position.y;
+        float overlapLeft = (m_CurrentPlayerBody.position.x + m_PlayerSize.x) - m_CurrentPlatformBody.position.x;
+        float overlapRight = (m_CurrentPlatformBody.position.x + m_PlatformSize.x) - m_CurrentPlayerBody.position.x;
         
         // Find smallest overlap to resolve collision properly
         float minOverlapX = std::min(overlapLeft, overlapRight);
@@ -179,65 +249,32 @@ void GameApplication::UpdatePhysics(float deltaTime)
             // Vertical collision is smaller - resolve vertically
             if (overlapTop < overlapBottom) {
                 // Collision from top - player landed on platform
-                m_PlayerBody.position.y = m_PlatformBody.position.y - m_PlayerSize.y;
-                m_PlayerBody.velocity.y = 0.0f;
+                m_CurrentPlayerBody.position.y = m_CurrentPlatformBody.position.y - m_PlayerSize.y;
+                m_CurrentPlayerBody.velocity.y = 0.0f;
                 m_IsGrounded = true;
                 std::cerr << "[DEBUG] Landing on platform from top" << std::endl;
             } else {
                 // Collision from bottom - player hit platform from below
-                m_PlayerBody.position.y = m_PlatformBody.position.y + m_PlatformSize.y;
-                m_PlayerBody.velocity.y = 0.0f;
+                m_CurrentPlayerBody.position.y = m_CurrentPlatformBody.position.y + m_PlatformSize.y;
+                m_CurrentPlayerBody.velocity.y = 0.0f;
                 std::cerr << "[DEBUG] Hitting platform from bottom" << std::endl;
             }
         } else {
             // Horizontal collision is smaller - resolve horizontally
             if (overlapLeft < overlapRight) {
                 // Collision from right - player came from right
-                m_PlayerBody.position.x = m_PlatformBody.position.x - m_PlayerSize.x;
-                m_PlayerBody.velocity.x = 0.0f;
+                m_CurrentPlayerBody.position.x = m_CurrentPlatformBody.position.x - m_PlayerSize.x;
+                m_CurrentPlayerBody.velocity.x = 0.0f;
                 std::cerr << "[DEBUG] Hitting platform from right" << std::endl;
             } else {
                 // Collision from left - player came from left
-                m_PlayerBody.position.x = m_PlatformBody.position.x + m_PlatformSize.x;
-                m_PlayerBody.velocity.x = 0.0f;
+                m_CurrentPlayerBody.position.x = m_CurrentPlatformBody.position.x + m_PlatformSize.x;
+                m_CurrentPlayerBody.velocity.x = 0.0f;
                 std::cerr << "[DEBUG] Hitting platform from left" << std::endl;
             }
         }
     }
     
-    std::cerr << "[DEBUG] After physics - Player position: (" << m_PlayerBody.position.x << ", " << m_PlayerBody.position.y << ")" << std::endl;
+    std::cerr << "[DEBUG] After physics - Player position: (" << m_CurrentPlayerBody.position.x << ", " << m_CurrentPlayerBody.position.y << ")" << std::endl;
     std::cerr << "[DEBUG] GameApplication::UpdatePhysics() completed" << std::endl;
-}
-
-void GameApplication::OnRender()
-{
-    std::cerr << "[DEBUG] GameApplication::OnRender() called" << std::endl;
-    
-    // Clear screen
-    glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    
-    // Begin rendering
-    Nyon::Graphics::Renderer2D::BeginScene();
-    
-    // Draw platform
-    Nyon::Graphics::Renderer2D::DrawQuad(
-        m_PlatformBody.position,
-        m_PlatformSize,
-        Nyon::Math::Vector2(0.0f, 0.0f),
-        m_PlatformColor
-    );
-    
-    // Draw player
-    Nyon::Graphics::Renderer2D::DrawQuad(
-        m_PlayerBody.position,
-        m_PlayerSize,
-        Nyon::Math::Vector2(0.0f, 0.0f),
-        m_PlayerColor
-    );
-    
-    // End rendering
-    Nyon::Graphics::Renderer2D::EndScene();
-    
-    std::cerr << "[DEBUG] GameApplication::OnRender() completed" << std::endl;
 }
