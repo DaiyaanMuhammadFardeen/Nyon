@@ -1,7 +1,6 @@
-README.md
 # Nyon Game Engine
 
-A 2D game engine built with OpenGL, GLFW, and GLAD for creating 2D games.
+A modern 2D game engine built with OpenGL, GLFW, and GLAD featuring a full Entity-Component-System (ECS) architecture for scalable game development.
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -9,21 +8,23 @@ A 2D game engine built with OpenGL, GLFW, and GLAD for creating 2D games.
 3. [Prerequisites](#prerequisites)
 4. [Building the Project](#building-the-project)
 5. [Running the Game](#running-the-game)
-6. [Understanding the Engine Architecture](#understanding-the-engine-architecture)
-7. [Creating Your Own Game](#creating-your-own-game)
-8. [Engine Systems Deep Dive](#engine-systems-deep-dive)
-9. [Advanced Topics](#advanced-topics)
+6. [ECS Architecture](#ecs-architecture)
+7. [Core Systems](#core-systems)
+8. [Creating Your Own Game](#creating-your-own-game)
+9. [Engine Systems Deep Dive](#engine-systems-deep-dive)
+10. [Advanced Topics](#advanced-topics)
 
 ## Overview
 
-The Nyon Game Engine is a lightweight 2D game engine designed to provide developers with essential systems needed to create 2D games. It features:
+The Nyon Game Engine is a modern 2D game engine designed with scalability and performance in mind. It features:
 
-- **Core Application Framework**: Base classes for creating game applications
-- **2D Graphics Rendering**: Quad rendering with color support
-- **Physics System**: Both AABB and SAT (Separating Axis Theorem) collision detection
-- **Input Management**: Keyboard input handling system
-- **Math Utilities**: Vector operations and transformations
-- **Modular Architecture**: Clear separation between engine and game code
+- **Full Entity-Component-System (ECS) Architecture**: Modular, data-oriented design for flexible game object composition
+- **Advanced Physics System**: SAT collision detection, continuous collision detection, and realistic physics simulation
+- **Multi-Shape Collision Support**: Polygons, circles, capsules, and composite shapes
+- **Real-time Rendering**: Efficient 2D rendering with batching and interpolation
+- **Input Management**: Comprehensive keyboard and mouse input handling
+- **Mathematical Foundation**: Vector operations and transformations optimized for game development
+- **Modern C++17**: Clean, type-safe codebase with modern C++ features
 
 ## Project Structure
 
@@ -31,14 +32,22 @@ The Nyon Game Engine is a lightweight 2D game engine designed to provide develop
 Nyon/
 ├── engine/                 # Engine source code
 │   ├── src/               # Engine source files
-│   ├── include/nyon/      # Engine public headers
 │   │   ├── core/          # Application framework
+│   │   ├── ecs/           # Entity-Component-System implementation
 │   │   ├── graphics/      # Rendering system
 │   │   ├── math/          # Mathematical utilities
 │   │   └── utils/         # Utility systems (physics, input)
+│   ├── include/nyon/      # Engine public headers
+│   │   ├── core/          # Application base classes
+│   │   ├── ecs/           # ECS core and components
+│   │   │   ├── components/ # Individual component types
+│   │   │   └── systems/    # ECS system implementations
+│   │   ├── graphics/      # Rendering interfaces
+│   │   ├── math/          # Mathematical structures
+│   │   └── utils/         # Physics and utility systems
 │   └── CMakeLists.txt     # Engine build configuration
 ├── game/                  # Game projects directory
-│   └── smash-bros-clone/  # Sample 2D fighting game
+│   └── smash-bros-clone/  # Sample platformer game demonstrating ECS usage
 │       ├── src/           # Game source files
 │       ├── include/       # Game headers
 │       └── CMakeLists.txt # Game build configuration
@@ -50,13 +59,13 @@ Nyon/
 
 To build and use the Nyon Engine, you'll need:
 
-- C++17 compatible compiler (GCC, Clang, or MSVC)
+- C++17 compatible compiler (GCC 7+, Clang 5+, or MSVC 2017+)
 - CMake 3.10 or higher
 - OpenGL development libraries
 - GLFW3 development libraries
 - GLM math library
 
-On Arch Linux, install the required packages:
+On Arch Linux:
 ```bash
 sudo pacman -S cmake gcc glfw-x11 glm
 ```
@@ -92,13 +101,13 @@ cmake ..
 
 ### Step 4: Build the Project
 ```bash
-make
+make -j$(nproc)
 ```
 
 ### Step 5: Verify Build Success
 You should see targets built:
 - `nyon_engine`: Static library containing the engine
-- `smash_bros_clone`: Example game demonstrating engine usage
+- `smash_bros_clone`: Example game demonstrating ECS usage
 
 ## Running the Game
 
@@ -113,47 +122,219 @@ After building, run the example game:
 - Space/Up Arrow: Jump
 - ESC: Quit
 
-## Understanding the Engine Architecture
+## ECS Architecture
 
-### Core Components
+### Core ECS Components
 
-#### 1. Application Framework (`engine/include/nyon/core/`)
-The Application class serves as the base for all games. It manages the main game loop, window creation, and event handling.
+The Nyon Engine implements a modern Entity-Component-System architecture:
 
-Key responsibilities:
-- Initializes OpenGL context and creates a window
-- Manages the main game loop (Update/Render cycle)
-- Handles window events and cleanup
+#### EntityManager
+Manages entity lifecycle, ID generation, and entity validity tracking.
 
-#### 2. Graphics System (`engine/include/nyon/graphics/`)
-Provides 2D rendering capabilities through the Renderer2D class.
+```cpp
+// Create entities
+Nyon::ECS::EntityID player = entityManager.CreateEntity();
+Nyon::ECS::EntityID enemy = entityManager.CreateEntity();
 
-Features:
-- Quad rendering with position, size, and color
-- Batch rendering for performance
-- Scene management with BeginScene/EndScene
+// Destroy entities
+entityManager.DestroyEntity(enemy);
+```
 
-#### 3. Math Utilities (`engine/include/nyon/math/`)
-Contains mathematical structures needed for 2D game development.
+#### ComponentStore
+Stores components in Structure of Arrays (SoA) layout for optimal cache performance.
 
-Available types:
-- Vector2: 2D vector operations
-- Vector3: 3D vector operations (for colors and positions)
+```cpp
+// Add components to entities
+componentStore.AddComponent(player, TransformComponent({100.0f, 100.0f}));
+componentStore.AddComponent(player, PhysicsBodyComponent(1.0f));
+componentStore.AddComponent(player, RenderComponent({32.0f, 32.0f}, {1.0f, 0.0f, 0.0f}));
 
-#### 4. Utility Systems (`engine/include/nyon/utils/`)
-Additional systems that games commonly need.
+// Access components
+auto& transform = componentStore.GetComponent<TransformComponent>(player);
+auto& physics = componentStore.GetComponent<PhysicsBodyComponent>(player);
+```
 
-Available systems:
-- Physics: Collision detection and gravity simulation
-- InputManager: Keyboard input handling
+#### Available Components
 
-### Engine-Game Separation Strategy
+**TransformComponent**: Position, rotation, and scale
+```cpp
+TransformComponent transform({x, y}, {scaleX, scaleY}, rotation);
+```
 
-The engine follows a clear separation strategy:
-- Engine code lives in `engine/` directory
-- Games live in `game/<game-name>/` directories
-- Games link against the engine using CMake's `target_link_libraries`
-- Engine headers are exposed through `engine/include/nyon/`
+**PhysicsBodyComponent**: Velocity, acceleration, mass, and physical properties
+```cpp
+PhysicsBodyComponent physics(mass, isStatic);
+physics.velocity = {vx, vy};
+physics.friction = 0.1f;
+```
+
+**ColliderComponent**: Multi-shape collision support with physics materials
+```cpp
+// Polygon collider
+ColliderComponent polygonCollider(polygonShape);
+polygonCollider.material.friction = 0.8f;
+
+// Circle collider
+ColliderComponent circleCollider(radius);
+circleCollider.material.restitution = 0.5f;
+```
+
+**RenderComponent**: Visual properties for rendering
+```cpp
+RenderComponent render({width, height}, {r, g, b}, "texture.png");
+```
+
+**BehaviorComponent**: Attachable game logic with lambda functions
+```cpp
+BehaviorComponent behavior;
+behavior.SetUpdateFunction([](EntityID entity, float deltaTime) {
+    // Custom update logic
+});
+```
+
+### ECS Systems
+
+Systems process entities with specific component combinations:
+
+#### PhysicsSystem
+Handles physics integration, gravity, friction, and movement.
+
+#### CollisionSystem
+Manages collision detection (AABB broad-phase + SAT narrow-phase) and resolution.
+
+#### RenderSystem
+Renders entities with interpolation for smooth motion between physics frames.
+
+#### InputSystem
+Processes user input and triggers behavior updates.
+
+#### SystemManager
+Orchestrates system execution order and manages the update cycle.
+
+### ECS Application
+
+Games inherit from `ECSApplication` to get full ECS functionality:
+
+```cpp
+class MyGame : public Nyon::ECSApplication
+{
+protected:
+    void OnECSStart() override {
+        // Initialize entities and components
+    }
+    
+    void OnECSUpdate(float deltaTime) override {
+        // Game-specific logic
+    }
+};
+```
+
+## Core Systems
+
+### Physics System
+
+Advanced physics simulation with multiple features:
+
+#### Basic Physics Body
+```cpp
+Nyon::Utils::Physics::Body body;
+body.position = {100.0f, 100.0f};
+body.velocity = {0.0f, 0.0f};
+body.mass = 1.0f;
+body.isStatic = false;
+```
+
+#### Gravity Physics
+```cpp
+// Apply gravity with sub-stepping for stability
+Nyon::Utils::GravityPhysics::UpdateBody(body, deltaTime, isGrounded);
+```
+
+#### Movement Physics
+```cpp
+// Apply forces and impulses
+Nyon::Utils::MovementPhysics::ApplyForce(body, forceVector);
+Nyon::Utils::MovementPhysics::ApplyImpulse(body, impulseVector);
+```
+
+### Collision Detection
+
+Multiple collision detection methods for different use cases:
+
+#### AABB Collision (Fast Broad-Phase)
+```cpp
+bool collision = Nyon::Utils::CollisionPhysics::CheckAABBCollision(
+    pos1, size1, pos2, size2
+);
+```
+
+#### SAT Collision (Precise Narrow-Phase)
+```cpp
+auto result = Nyon::Utils::CollisionPhysics::CheckPolygonCollision(
+    polygon1, position1,
+    polygon2, position2
+);
+// result.collided, result.overlapAxis, result.overlapAmount
+```
+
+#### Continuous Collision Detection (CCD)
+```cpp
+auto ccdResult = Nyon::Utils::CollisionPhysics::ContinuousCollisionCheck(
+    polygon1, startPos1, endPos1,
+    polygon2, startPos2, endPos2
+);
+// Prevents tunneling for fast-moving objects
+```
+
+#### Raycasting
+```cpp
+auto rayResult = Nyon::Utils::CollisionPhysics::RaycastPolygon(
+    rayStart, rayEnd, polygon, polygonPosition
+);
+```
+
+### Input Management
+
+Comprehensive input handling system:
+
+```cpp
+// Check current key state
+if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_SPACE)) {
+    // Key is currently held
+}
+
+// Check single press events
+if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_ENTER)) {
+    // Key was just pressed this frame
+}
+
+// Mouse input
+if (Nyon::Utils::InputManager::IsMouseDown(GLFW_MOUSE_BUTTON_LEFT)) {
+    double mouseX, mouseY;
+    Nyon::Utils::InputManager::GetMousePosition(mouseX, mouseY);
+}
+```
+
+### Graphics Rendering
+
+High-performance 2D rendering system:
+
+```cpp
+// Initialize renderer
+Nyon::Graphics::Renderer2D::Init();
+
+// Render loop
+Nyon::Graphics::Renderer2D::BeginScene();
+
+Nyon::Graphics::Renderer2D::DrawQuad(
+    position,    // Vector2 world position
+    size,        // Vector2 dimensions
+    origin,      // Vector2 pivot point
+    color        // Vector3 RGB color (0.0-1.0)
+);
+
+Nyon::Graphics::Renderer2D::EndScene();
+```
 
 ## Creating Your Own Game
 
@@ -174,34 +355,29 @@ Create `game/my-awesome-game/include/MyGameApp.h`:
 ```cpp
 #pragma once
 
-#include "nyon/core/Application.h"
-#include "nyon/math/Vector2.h"
-#include "nyon/math/Vector3.h"
-#include "nyon/utils/InputManager.h"
-#include "nyon/utils/Physics.h"
+#include "nyon/core/ECSApplication.h"
+#include "nyon/ecs/components/TransformComponent.h"
+#include "nyon/ecs/components/PhysicsBodyComponent.h"
+#include "nyon/ecs/components/ColliderComponent.h"
+#include "nyon/ecs/components/RenderComponent.h"
+#include "nyon/ecs/components/BehaviorComponent.h"
 #include <vector>
 
-class MyGameApp : public Nyon::Application
+class MyGameApp : public Nyon::ECSApplication
 {
 public:
     MyGameApp();
 
 protected:
-    virtual void OnStart() override;
-    virtual void OnUpdate(float deltaTime) override;
-    virtual void OnRender() override;
+    void OnECSStart() override;
+    void OnECSUpdate(float deltaTime) override;
 
 private:
-    void HandleInput(float deltaTime);
-    void UpdateGameLogic(float deltaTime);
-
-    // Example game objects
-    Nyon::Utils::Physics::Body m_Player;
-    Nyon::Utils::Physics::Polygon m_PlayerShape;
-    Nyon::Math::Vector2 m_PlayerSize;
-    Nyon::Math::Vector3 m_PlayerColor;
+    void CreatePlayer();
+    void SetupPlayerControls();
     
-    // More game-specific members...
+    Nyon::ECS::EntityID m_PlayerEntity;
+    std::vector<Nyon::ECS::EntityID> m_EnemyEntities;
 };
 ```
 
@@ -211,96 +387,75 @@ Create `game/my-awesome-game/src/MyGameApp.cpp`:
 
 ```cpp
 #include "MyGameApp.h"
-#include "nyon/graphics/Renderer2D.h"
 #include <iostream>
 
 MyGameApp::MyGameApp()
-    : Application("My Awesome Game", 1280, 720)
+    : ECSApplication("My Awesome Game", 1280, 720)
 {
-    std::cout << "My game application initialized" << std::endl;
+    std::cout << "My game application initialized with ECS" << std::endl;
 }
 
-void MyGameApp::OnStart()
+void MyGameApp::OnECSStart()
 {
-    // Initialize renderer
-    Nyon::Graphics::Renderer2D::Init();
+    CreatePlayer();
+    SetupPlayerControls();
     
-    // Initialize input manager
-    Nyon::Utils::InputManager::Init(GetWindow());
-    
-    // Initialize your game objects
-    m_Player.position = Nyon::Math::Vector2(100.0f, 100.0f);
-    m_Player.velocity = Nyon::Math::Vector2(0.0f, 0.0f);
-    m_Player.acceleration = Nyon::Math::Vector2(0.0f, 0.0f);
-    m_Player.mass = 1.0f;
-    m_Player.isStatic = false;
-    
-    m_PlayerSize = Nyon::Math::Vector2(32.0f, 32.0f);
-    m_PlayerColor = Nyon::Math::Vector3(0.0f, 0.8f, 1.0f); // Cyan
-    
-    // Define player as a polygon for SAT collision
-    m_PlayerShape = {
-        Nyon::Math::Vector2(0.0f, 0.0f),                    // bottom-left
-        Nyon::Math::Vector2(m_PlayerSize.x, 0.0f),          // bottom-right
-        Nyon::Math::Vector2(m_PlayerSize.x, m_PlayerSize.y), // top-right
-        Nyon::Math::Vector2(0.0f, m_PlayerSize.y)           // top-left
-    };
+    // Create enemies, platforms, etc.
 }
 
-void MyGameApp::OnUpdate(float deltaTime)
+void MyGameApp::CreatePlayer()
 {
-    // Update input
-    Nyon::Utils::InputManager::Update();
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
     
-    // Handle player input
-    HandleInput(deltaTime);
+    // Create player entity
+    m_PlayerEntity = entityManager.CreateEntity();
     
-    // Update game logic
-    UpdateGameLogic(deltaTime);
+    // Add components
+    componentStore.AddComponent(m_PlayerEntity, 
+        Nyon::ECS::TransformComponent({100.0f, 100.0f}));
+    
+    componentStore.AddComponent(m_PlayerEntity,
+        Nyon::ECS::PhysicsBodyComponent(1.0f, false));
+    
+    componentStore.AddComponent(m_PlayerEntity,
+        Nyon::ECS::ColliderComponent({32.0f, 32.0f}));
+    
+    componentStore.AddComponent(m_PlayerEntity,
+        Nyon::ECS::RenderComponent({32.0f, 32.0f}, {0.0f, 0.8f, 1.0f}));
 }
 
-void MyGameApp::HandleInput(float deltaTime)
+void MyGameApp::SetupPlayerControls()
 {
-    // Handle keyboard input
-    if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A) || 
-        Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_LEFT))
-    {
-        m_Player.position.x -= 200.0f * deltaTime; // Move left
-    }
-    else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D) || 
-             Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_RIGHT))
-    {
-        m_Player.position.x += 200.0f * deltaTime; // Move right
-    }
+    auto& componentStore = GetComponentStore();
     
-    // Add more input handling as needed
+    Nyon::ECS::BehaviorComponent behavior;
+    
+    behavior.SetUpdateFunction([this](Nyon::ECS::EntityID entity, float deltaTime) {
+        auto& physics = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entity);
+        
+        // Handle input
+        if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A)) {
+            physics.velocity.x = -200.0f;
+        } else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D)) {
+            physics.velocity.x = 200.0f;
+        } else {
+            physics.velocity.x = 0.0f;
+        }
+        
+        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_SPACE) && physics.isGrounded) {
+            physics.velocity.y = -400.0f;
+            physics.isGrounded = false;
+        }
+    });
+    
+    componentStore.AddComponent(m_PlayerEntity, std::move(behavior));
 }
 
-void MyGameApp::UpdateGameLogic(float deltaTime)
+void MyGameApp::OnECSUpdate(float deltaTime)
 {
-    // Apply physics updates, game logic, etc.
-    // This is where your game-specific code goes
-}
-
-void MyGameApp::OnRender()
-{
-    // Clear screen
-    glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    
-    // Begin rendering
-    Nyon::Graphics::Renderer2D::BeginScene();
-    
-    // Render your game objects
-    Nyon::Graphics::Renderer2D::DrawQuad(
-        m_Player.position,
-        m_PlayerSize,
-        Nyon::Math::Vector2(0.0f, 0.0f),
-        m_PlayerColor
-    );
-    
-    // End rendering
-    Nyon::Graphics::Renderer2D::EndScene();
+    // Additional game logic can go here
+    // ECS systems handle most processing automatically
 }
 ```
 
@@ -313,15 +468,17 @@ cmake_minimum_required(VERSION 3.10)
 project(my_awesome_game)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(OpenGL REQUIRED)
+find_package(glfw3 REQUIRED)
+find_package(glm REQUIRED)
 
 # Add executable
 add_executable(my_awesome_game
     src/main.cpp
     src/MyGameApp.cpp
-    include/MyGameApp.h
 )
 
 # Include directories
@@ -329,9 +486,9 @@ target_include_directories(my_awesome_game PRIVATE include)
 target_include_directories(my_awesome_game PRIVATE ../engine/include)
 
 # Link libraries
-target_link_libraries(my_awesome_game PRIVATE nyon_engine OpenGL::GL)
+target_link_libraries(my_awesome_game PRIVATE nyon_engine OpenGL::GL glfw glm)
 
-# Set the executable output directory
+# Set output directory
 set_target_properties(my_awesome_game PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/game/my-awesome-game
 )
@@ -357,8 +514,6 @@ int main()
 Add your game to the root `CMakeLists.txt` file:
 
 ```cmake
-# ... existing content ...
-
 # Add subdirectories
 add_subdirectory(engine)
 add_subdirectory(game/smash-bros-clone)
@@ -377,119 +532,195 @@ make my_awesome_game
 
 ## Engine Systems Deep Dive
 
-### Physics System
+### Advanced ECS Patterns
 
-The physics system provides both traditional AABB and advanced SAT collision detection:
-
-#### AABB Collision (Simple Rectangles)
+#### Component Queries
 ```cpp
-bool collision = Nyon::Utils::Physics::CheckCollision(
-    body1, size1,
-    body2, size2
-);
+// Get all entities with specific components
+const auto& physicsEntities = componentStore.GetEntitiesWithComponent<PhysicsBodyComponent>();
+const auto& renderEntities = componentStore.GetEntitiesWithComponent<RenderComponent>();
+
+// Process entities with multiple components
+for (auto entity : physicsEntities) {
+    if (componentStore.HasComponent<ColliderComponent>(entity)) {
+        // Entity has both physics and collision components
+        auto& physics = componentStore.GetComponent<PhysicsBodyComponent>(entity);
+        auto& collider = componentStore.GetComponent<ColliderComponent>(entity);
+        // Process combined behavior
+    }
+}
 ```
 
-#### SAT Collision (Arbitrary Convex Polygons)
-```cpp
-using Polygon = std::vector<Nyon::Math::Vector2>;
+#### System Dependencies
+Systems are executed in order to ensure proper data flow:
+1. InputSystem - Processes user input first
+2. PhysicsSystem - Updates physics bodies
+3. CollisionSystem - Detects and resolves collisions
+4. RenderSystem - Draws the final frame
 
-Nyon::Utils::Physics::Polygon playerShape = {
-    {0.0f, 0.0f},
-    {32.0f, 0.0f},
-    {32.0f, 32.0f},
-    {0.0f, 32.0f}
+#### Custom Systems
+Create custom systems by inheriting from the System base class:
+
+```cpp
+class AISystem : public Nyon::ECS::System
+{
+public:
+    void Update(float deltaTime) override {
+        const auto& aiEntities = m_ComponentStore->GetEntitiesWithComponent<AIBehaviorComponent>();
+        for (auto entity : aiEntities) {
+            auto& ai = m_ComponentStore->GetComponent<AIBehaviorComponent>(entity);
+            // Process AI logic
+        }
+    }
 };
-
-bool collision = Nyon::Utils::Physics::CheckPolygonCollision(
-    playerShape, playerPosition,
-    enemyShape, enemyPosition
-);
 ```
 
-#### Physics Utilities
-- Gravity constant: `Nyon::Utils::Physics::Gravity`
-- Apply gravity: `Nyon::Utils::Physics::ApplyGravity(body)`
-- Update body position: `Nyon::Utils::Physics::UpdateBody(body, deltaTime)`
+### Physics Materials and Surfaces
 
-### Input Management
-
-The InputManager provides keyboard input handling:
+Configure realistic surface interactions:
 
 ```cpp
-// Check if key is currently held down
-if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_SPACE)) {
-    // Action continues while key is held
-}
-
-// Check if key was just pressed (one frame only)
-if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_W)) {
-    // Action happens once when key is pressed
-}
+ColliderComponent collider;
+collider.material.friction = 0.1f;      // Ice-like surface
+collider.material.restitution = 0.8f;   // Bouncy surface
+collider.material.density = 2.0f;       // Heavy material
+collider.material.surfaceType = "metal"; // For audio/effects
 ```
 
-### Graphics Rendering
+### Multi-Shape Colliders
 
-The Renderer2D system provides simple quad rendering:
+Support for different collision geometries:
 
 ```cpp
-// Initialize renderer (typically in OnStart)
-Nyon::Graphics::Renderer2D::Init();
+// Circle collider for balls/projectiles
+ColliderComponent circle(16.0f); // 16-pixel radius
 
-// In render loop
-Nyon::Graphics::Renderer2D::BeginScene();
+// Polygon collider for complex shapes
+std::vector<Vector2> complexShape = {
+    {0, 0}, {32, 0}, {48, 16}, {32, 32}, {0, 32}
+};
+ColliderComponent customPolygon(complexShape);
 
-// Draw a quad
-Nyon::Graphics::Renderer2D::DrawQuad(
-    position,    // Nyon::Math::Vector2
-    size,        // Nyon::Math::Vector2
-    origin,      // Nyon::Math::Vector2 (usually {0, 0})
-    color        // Nyon::Math::Vector3 (RGB values 0.0-1.0)
-);
+// Composite collider for complex objects
+ColliderComponent::CompositeShape composite;
+composite.subShapes.push_back(baseShape);
+composite.subShapes.push_back(attachmentShape);
+```
 
-Nyon::Graphics::Renderer2D::EndScene();
+### Behavior System
+
+Attach custom logic to entities without modifying engine code:
+
+```cpp
+BehaviorComponent behavior;
+
+// Update behavior (runs every frame)
+behavior.SetUpdateFunction([](EntityID entity, float deltaTime) {
+    // Custom per-frame logic
+});
+
+// Collision behavior (runs on collision events)
+behavior.SetCollisionFunction([](EntityID entity, EntityID other) {
+    // Handle collision with other entity
+});
+
+componentStore.AddComponent(entity, std::move(behavior));
 ```
 
 ## Advanced Topics
 
-### Adding Custom Engine Features
+### Performance Optimization
 
-To add new engine features:
+1. **Entity Pooling**: Reuse entity IDs to reduce allocation overhead
+2. **System Ordering**: Arrange systems to minimize data dependencies
+3. **Batch Rendering**: Group similar render calls for better GPU performance
+4. **Spatial Partitioning**: Implement quadtrees/octrees for collision optimization
+5. **Component Archetypes**: Group entities with similar component layouts
 
-1. Add headers to the appropriate directory in `engine/include/nyon/`
-2. Implement functionality in `engine/src/`
-3. Update the engine's CMakeLists.txt if adding new source files
-4. Ensure the feature is accessible through public headers
+### Memory Management
 
-### Performance Tips
+The ECS uses Structure of Arrays for optimal cache performance:
+- Components of the same type are stored contiguously
+- Iteration over components is cache-friendly
+- Memory layout can be optimized for specific access patterns
 
-1. **Batch Rendering**: Use the renderer's batch system by calling multiple DrawQuad between BeginScene/EndScene
-2. **Minimize State Changes**: Group similar objects when rendering
-3. **Efficient Collision**: Use AABB for simple checks, SAT only when polygon precision is needed
-4. **Object Pooling**: For games with many temporary objects
+### Extending the Engine
 
-### Debugging Tips
+#### Adding New Components
+1. Create header in `engine/include/nyon/ecs/components/`
+2. Components should be pure data structures
+3. Register with ComponentStore template system
 
-1. Use the provided debug prints in the sample game as a template
-2. Check that your window is properly initialized before using InputManager
-3. Validate that physics bodies are properly configured (mass, isStatic, etc.)
-4. Monitor frame rate and optimize if needed
+#### Adding New Systems
+1. Inherit from `Nyon::ECS::System`
+2. Implement `Update()` method
+3. Register with SystemManager in ECSApplication
+
+#### Custom Physics Shapes
+Extend the ColliderComponent to support new shapes:
+1. Add new ShapeType enum value
+2. Extend the variant with new shape structure
+3. Implement collision detection in CollisionPhysics
+
+### Debugging and Profiling
+
+Enable debug output:
+```cpp
+#define NYON_DEBUG_LOGGING 1
+```
+
+Monitor system performance:
+```cpp
+// Track entity counts
+size_t entityCount = entityManager.GetActiveEntityCount();
+
+// Monitor component usage
+const auto& physicsEntities = componentStore.GetEntitiesWithComponent<PhysicsBodyComponent>();
+std::cout << "Physics entities: " << physicsEntities.size() << std::endl;
+```
 
 ## Features
 
-- Basic 2D rendering with sprite drawing
-- Physics system with gravity and both AABB and SAT collision detection
-- Input management system
-- Entity-component-system ready architecture
-- Separate engine and game code structure
+### Core Engine Features
+- **Entity-Component-System Architecture**: Modern, scalable game object model
+- **Advanced Physics**: SAT collision detection, CCD, and realistic physics simulation
+- **Multi-Shape Collisions**: Polygons, circles, capsules, and composite shapes
+- **Real-time Rendering**: Efficient 2D rendering with batching and interpolation
+- **Input Management**: Comprehensive keyboard and mouse input handling
+- **Mathematical Foundation**: Optimized vector operations for game development
+- **Modular Design**: Clean separation between engine systems and game code
+
+### ECS Features
+- **Flexible Entity Composition**: Mix components freely without inheritance hierarchies
+- **High Performance**: Structure of Arrays storage for cache-friendly access
+- **Extensible Systems**: Easy to add custom processing systems
+- **Behavior Attachment**: Lambda-based behaviors for custom entity logic
+- **Automatic Cleanup**: Proper resource management and entity lifecycle handling
+
+### Physics Features
+- **Continuous Collision Detection**: Prevents tunneling for fast-moving objects
+- **Physics Materials**: Per-collider friction, restitution, and surface properties
+- **Raycasting**: Line-of-sight and projectile collision detection
+- **Collision Response**: Realistic collision resolution with momentum transfer
+- **Grounded State Detection**: Automatic platform and surface detection
 
 ## Architecture
 
-The engine is designed with a clear separation between engine code and game code. The engine provides:
-- Core application framework
-- Graphics rendering system
-- Input management
-- Basic physics simulation with SAT collision detection
-- Math utilities
-- Modular design allowing easy extension
+The Nyon Engine follows modern game engine architecture principles:
 
-Games can extend the base Application class and use the engine's systems to build their specific game logic.
+### Data-Oriented Design
+- Components stored in arrays for cache efficiency
+- Systems process data in batches
+- Minimized indirection and virtual function calls
+
+### Separation of Concerns
+- Engine provides core systems and infrastructure
+- Games implement specific logic through ECS components
+- Clear API boundaries between engine and game code
+
+### Scalability
+- ECS architecture scales from simple prototypes to complex games
+- Component-based design allows easy feature addition
+- Systems can be enabled/disabled based on game requirements
+
+The engine is production-ready for 2D game development with enterprise-grade architecture suitable for both indie developers and professional studios.
