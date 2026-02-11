@@ -1,4 +1,4 @@
-#include"GameApplication.h"
+#include "GameApplication.h"
 #include <iostream>
 #include <cmath>
 
@@ -28,7 +28,6 @@ void GameApplication::OnECSStart()
 void GameApplication::OnECSUpdate(float deltaTime)
 {
     std::cerr << "[DEBUG] GameApplication::OnECSUpdate() called" << std::endl;
-    // Additional game-specific logic can go here
     std::cerr << "[DEBUG] GameApplication::OnECSUpdate() completed" << std::endl;
 }
 
@@ -46,6 +45,7 @@ void GameApplication::CreatePlayer()
     
     // Add physics body component
     Nyon::ECS::PhysicsBodyComponent physics(1.0f, false); // mass=1.0, not static
+    physics.friction = 0.2f;  // Increased friction for better ground control
     componentStore.AddComponent(m_PlayerEntity, std::move(physics));
     
     // Add collider component (polygon shape)
@@ -136,29 +136,63 @@ void GameApplication::SetupPlayerBehavior()
         
         auto& physics = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entity);
         
-        // Horizontal movement
+        // Horizontal movement with acceleration
+        float targetSpeed = 0.0f;
+        const float MOVE_SPEED = 300.0f;
+        const float ACCELERATION = 2000.0f;
+        const float DECELERATION = 1500.0f;
+        
         if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_LEFT))
         {
-            physics.velocity.x = -PLAYER_SPEED;
+            targetSpeed = -MOVE_SPEED;
         }
         else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D) || Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_RIGHT))
         {
-            physics.velocity.x = PLAYER_SPEED;
-        }
-        else
-        {
-            physics.velocity.x = 0.0f;
+            targetSpeed = MOVE_SPEED;
         }
         
-        // Jumping
+        // Smooth acceleration/deceleration
+        if (targetSpeed != 0.0f) {
+            float speedDiff = targetSpeed - physics.velocity.x;
+            physics.velocity.x += speedDiff * ACCELERATION * deltaTime;
+            if (std::abs(physics.velocity.x) > std::abs(targetSpeed)) {
+                physics.velocity.x = targetSpeed;
+            }
+        } else {
+            // Deceleration when no input
+            if (physics.velocity.x > 0) {
+                physics.velocity.x = std::max(0.0f, physics.velocity.x - DECELERATION * deltaTime);
+            } else if (physics.velocity.x < 0) {
+                physics.velocity.x = std::min(0.0f, physics.velocity.x + DECELERATION * deltaTime);
+            }
+        }
+        
+        // Jumping with coyote time
+        static float coyoteTimer = 0.0f;
+        const float COYOTE_TIME = 0.1f;
+        const float JUMP_FORCE = -400.0f;
+        
+        // Update coyote timer using stable grounded detection
+        if (physics.IsStablyGrounded()) {
+            coyoteTimer = COYOTE_TIME;
+        } else {
+            coyoteTimer -= deltaTime;
+        }
+        
+        // Jump input handling
         if ((Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_SPACE) ||
-             Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_UP)) && physics.isGrounded)
+             Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_UP)) && 
+            (physics.IsStablyGrounded() || coyoteTimer > 0.0f))
         {
             physics.velocity.y = JUMP_FORCE;
-            physics.isGrounded = false;
+            // Don't immediately set grounded to false - let collision system handle it
+            coyoteTimer = 0.0f;
+            std::cout << "[INPUT] Player jumped!" << std::endl;
         }
         
-        std::cerr << "[DEBUG] Player velocity: (" << physics.velocity.x << ", " << physics.velocity.y << ")" << std::endl;
+        std::cerr << "[DEBUG] Player velocity: (" << physics.velocity.x << ", " << physics.velocity.y 
+                  << ") stably grounded: " << physics.IsStablyGrounded() 
+                  << " frames: " << physics.groundedFrames << std::endl;
     });
     
     componentStore.AddComponent(m_PlayerEntity, std::move(behavior));
@@ -167,5 +201,4 @@ void GameApplication::SetupPlayerBehavior()
 void GameApplication::SetupPlatformBehaviors()
 {
     // Platforms are static, so they don't need behaviors
-    // But we could add behaviors for moving platforms, destructible platforms, etc.
 }
