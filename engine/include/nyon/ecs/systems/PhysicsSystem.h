@@ -13,7 +13,7 @@ namespace Nyon::ECS
      * @brief Physics system that updates all entities with PhysicsBodyComponent.
      * 
      * Integrates forces, applies gravity, handles friction and drag.
-     * Works with both static and dynamic bodies.
+     * Uses stable grounded detection from collision system.
      */
     class PhysicsSystem : public System
     {
@@ -48,8 +48,8 @@ namespace Nyon::ECS
                     physicsBody.maxSpeed = body.maxSpeed;
                     physicsBody.isStatic = body.isStatic;
                     
-                    // Update physics with current grounded state
-                    Utils::GravityPhysics::UpdateBody(physicsBody, deltaTime, body.isGrounded);
+                    // Update physics with stable grounded state
+                    Utils::GravityPhysics::UpdateBody(physicsBody, deltaTime, body.IsStablyGrounded());
                     
                     // Update ECS components from processed physics body
                     body.velocity = physicsBody.velocity;
@@ -68,7 +68,7 @@ namespace Nyon::ECS
                     physicsBody.maxSpeed = body.maxSpeed;
                     physicsBody.isStatic = body.isStatic;
                     
-                    Utils::GravityPhysics::UpdateBody(physicsBody, deltaTime, body.isGrounded);
+                    Utils::GravityPhysics::UpdateBody(physicsBody, deltaTime, body.IsStablyGrounded());
                     
                     body.velocity = physicsBody.velocity;
                     body.acceleration = physicsBody.acceleration;
