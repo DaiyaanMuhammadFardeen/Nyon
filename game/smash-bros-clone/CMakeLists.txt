@@ -9,17 +9,20 @@ find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
 
-# Collect game source files
+# Collect all game source files
 file(GLOB_RECURSE GAME_SOURCES "src/*.cpp")
 
-# Create the game executable
+# Create the executable
 add_executable(smash_bros_clone ${GAME_SOURCES})
 
-# Include directories
+# Set up include directories
 target_include_directories(smash_bros_clone PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../engine/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../engine/include
 )
 
-# Link the engine library
-target_link_libraries(smash_bros_clone PRIVATE nyon_engine)
+# Link with the engine library and dependencies
+target_link_libraries(smash_bros_clone PRIVATE nyon_engine OpenGL::GL glfw glm)
+
+# Ensure engine is built first
+add_dependencies(smash_bros_clone nyon_engine)
