@@ -21,8 +21,26 @@ namespace Nyon::ECS
         bool isStatic = false;                      // Whether body is immovable
         bool isGrounded = false;                    // Current grounded state
         
+        // For stable grounded detection
+        int groundedFrames = 0;                     // Consecutive frames grounded
+        static constexpr int GROUNDED_THRESHOLD = 2; // Minimum frames to be considered grounded
+        
         PhysicsBodyComponent() = default;
         PhysicsBodyComponent(float m) : mass(m) {}
         PhysicsBodyComponent(float m, bool stat) : mass(m), isStatic(stat) {}
+        
+        // Stable grounded state getter
+        bool IsStablyGrounded() const { return groundedFrames >= GROUNDED_THRESHOLD; }
+        
+        // Update grounded frame counter
+        void UpdateGroundedState(bool currentlyGrounded)
+        {
+            if (currentlyGrounded) {
+                groundedFrames++;
+            } else {
+                groundedFrames = 0;
+            }
+            isGrounded = IsStablyGrounded();
+        }
     };
 }
