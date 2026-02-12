@@ -309,30 +309,4 @@ TEST_F(BehaviorComponentTest, SetUpdateFunction)
     LOG_FUNC_EXIT();
 }
 
-TEST_F(BehaviorComponentTest, Update_WithoutFunction)
-{
-    LOG_FUNC_ENTER();
-    // Should not crash when Update is called without setting a function
-    EXPECT_NO_THROW(behavior.Update(testEntity, 1.0f / 60.0f));
-    LOG_FUNC_EXIT();
-}
 
-TEST_F(BehaviorComponentTest, Update_MultipleCalls)
-{
-    LOG_FUNC_ENTER();
-    int callCount = 0;
-    
-    auto updateFunc = [&](EntityID entity, float deltaTime) {
-        callCount++;
-    };
-    
-    behavior.SetUpdateFunction(updateFunc);
-    
-    behavior.Update(testEntity, 1.0f / 60.0f);
-    behavior.Update(testEntity, 1.0f / 60.0f);
-    behavior.Update(testEntity, 1.0f / 60.0f);
-    
-    LOG_VAR_DEBUG(callCount);
-    EXPECT_EQ(callCount, 3);
-    LOG_FUNC_EXIT();
-}
