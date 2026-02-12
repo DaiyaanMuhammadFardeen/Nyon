@@ -141,5 +141,11 @@ namespace Nyon::ECS
                     break;
             }
         }
+        
+        // Alias for backwards compatibility
+        void GetBounds(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
+        {
+            CalculateAABB(position, outMin, outMax);
+        }
     };
 }
