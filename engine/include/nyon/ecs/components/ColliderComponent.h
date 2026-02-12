@@ -76,6 +76,11 @@ namespace Nyon::ECS
             shape = CircleShape{{0, 0}, radius};
         }
         
+        ColliderComponent(const CircleShape& circle) : type(ShapeType::Circle)
+        {
+            shape = circle;
+        }
+        
         // Helper methods to access shape data safely
         PolygonShape& GetPolygon() 
         {
@@ -147,5 +152,8 @@ namespace Nyon::ECS
         {
             CalculateAABB(position, outMin, outMax);
         }
+        
+        // Getter for type
+        ShapeType GetType() const { return type; }
     };
 }
