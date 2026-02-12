@@ -32,7 +32,7 @@ TEST_F(ComponentStoreTest, AddComponent_SingleComponent)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     
     componentStore->AddComponent(entity, std::move(transform));
     
@@ -44,7 +44,7 @@ TEST_F(ComponentStoreTest, AddComponent_MultipleComponentsSameEntity)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     PhysicsBodyComponent physics(1.0f, false);
     
     componentStore->AddComponent(entity, std::move(transform));
@@ -97,7 +97,7 @@ TEST_F(ComponentStoreTest, GetComponent_ModifyComponent)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({0.0f, 0.0f});
+    TransformComponent transform(Nyon::Math::Vector2(0.0f, 0.0f));
     
     componentStore->AddComponent(entity, std::move(transform));
     
@@ -121,7 +121,7 @@ TEST_F(ComponentStoreTest, RemoveComponent_SingleComponent)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     
     componentStore->AddComponent(entity, std::move(transform));
     EXPECT_TRUE(componentStore->HasComponent<TransformComponent>(entity));
@@ -147,7 +147,7 @@ TEST_F(ComponentStoreTest, RemoveComponent_PartialRemoval)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     PhysicsBodyComponent physics(1.0f, false);
     
     componentStore->AddComponent(entity, std::move(transform));
@@ -165,7 +165,7 @@ TEST_F(ComponentStoreTest, HasComponent_ExistingComponent)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     
     componentStore->AddComponent(entity, std::move(transform));
     
@@ -191,7 +191,7 @@ TEST_F(ComponentStoreTest, HasComponent_WrongEntityType)
     LOG_FUNC_ENTER();
     EntityID entity1 = entityManager->CreateEntity();
     EntityID entity2 = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     
     componentStore->AddComponent(entity1, std::move(transform));
     
@@ -216,7 +216,7 @@ TEST_F(ComponentStoreTest, GetEntitiesWithComponent_SingleEntity)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     
     componentStore->AddComponent(entity, std::move(transform));
     
@@ -282,7 +282,7 @@ TEST_F(ComponentStoreTest, DifferentComponentTypes_Isolation)
 {
     LOG_FUNC_ENTER();
     EntityID entity = entityManager->CreateEntity();
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     PhysicsBodyComponent physics(1.0f, false);
     
     componentStore->AddComponent(entity, std::move(transform));
@@ -304,7 +304,7 @@ TEST_F(ComponentStoreTest, AddComponent_InvalidEntity)
 {
     LOG_FUNC_ENTER();
     EntityID invalidEntity = 999u;
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     
     // Should handle invalid entities gracefully
     EXPECT_DEATH(componentStore->AddComponent(invalidEntity, std::move(transform)), "");
@@ -346,7 +346,7 @@ TEST_F(ComponentStoreTest, Stress_AddManyComponents)
     for (size_t i = 0; i < numEntities; ++i) {
         EntityID entity = entityManager->CreateEntity();
         entities.push_back(entity);
-        TransformComponent transform({static_cast<float>(i), static_cast<float>(i * 2)});
+        TransformComponent transform(Nyon::Math::Vector2(static_cast<float>(i), static_cast<float>(i * 2)));
         componentStore->AddComponent(entity, std::move(transform));
     }
     
@@ -367,7 +367,7 @@ TEST_F(ComponentStoreTest, MemoryManagement_MoveSemantics)
     EntityID entity = entityManager->CreateEntity();
     
     // Test that components are properly moved
-    TransformComponent transform({100.0f, 200.0f});
+    TransformComponent transform(Nyon::Math::Vector2(100.0f, 200.0f));
     Nyon::Math::Vector2 originalPosition = transform.position;
     
     componentStore->AddComponent(entity, std::move(transform));
