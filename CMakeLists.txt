@@ -13,6 +13,13 @@ find_package(glm REQUIRED)
 add_subdirectory(engine)
 add_subdirectory(game/smash-bros-clone)
 
+# Optional: Add testing subdirectory
+option(ENABLE_TESTING "Enable testing" ON)
+if(ENABLE_TESTING)
+    enable_testing()
+    add_subdirectory(test)
+endif()
+
 # Optional: Add documentation target
 if(BUILD_DOCUMENTATION)
     find_package(Doxygen QUIET)
