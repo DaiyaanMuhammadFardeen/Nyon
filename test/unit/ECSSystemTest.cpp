@@ -104,8 +104,8 @@ TEST_F(PhysicsSystemTest, Update_SingleDynamicBody)
     float deltaTime = 1.0f / 60.0f;
     physicsSystem->Update(deltaTime);
     
-    const TransformComponent& updatedTransform = componentStore->GetComponent<TransformComponent>(entity);
-    const PhysicsBodyComponent& updatedPhysics = componentStore->GetComponent<PhysicsBodyComponent>(entity);
+    const TransformComponent& updatedTransform = componentStore->template GetComponent<TransformComponent>(entity);
+    const PhysicsBodyComponent& updatedPhysics = componentStore->template GetComponent<PhysicsBodyComponent>(entity);
     
     LOG_VAR_DEBUG(updatedTransform.position.y);
     LOG_VAR_DEBUG(updatedPhysics.velocity.y);
@@ -130,8 +130,8 @@ TEST_F(PhysicsSystemTest, Update_StaticBody_NoMovement)
     
     physicsSystem->Update(1.0f / 60.0f);
     
-    const TransformComponent& updatedTransform = componentStore->GetComponent<TransformComponent>(entity);
-    const PhysicsBodyComponent& updatedPhysics = componentStore->GetComponent<PhysicsBodyComponent>(entity);
+    const TransformComponent& updatedTransform = componentStore->template GetComponent<TransformComponent>(entity);
+    const PhysicsBodyComponent& updatedPhysics = componentStore->template GetComponent<PhysicsBodyComponent>(entity);
     
     LOG_VAR_DEBUG(updatedTransform.position.x);
     LOG_VAR_DEBUG(updatedTransform.position.y);
@@ -161,12 +161,12 @@ TEST_F(PhysicsSystemTest, Update_GroundedStatePropagation)
     // Simulate being grounded for several frames
     for (int i = 0; i < PhysicsBodyComponent::GROUNDED_THRESHOLD + 1; ++i) {
         // Manually update grounded state (simulating collision system)
-        auto& physicsRef = componentStore->GetComponent<PhysicsBodyComponent>(entity);
+        auto& physicsRef = componentStore->template GetComponent<PhysicsBodyComponent>(entity);
         physicsRef.UpdateGroundedState(true);
         physicsSystem->Update(1.0f / 60.0f);
     }
     
-    const PhysicsBodyComponent& finalPhysics = componentStore->GetComponent<PhysicsBodyComponent>(entity);
+    const PhysicsBodyComponent& finalPhysics = componentStore->template GetComponent<PhysicsBodyComponent>(entity);
     
     LOG_VAR_DEBUG(finalPhysics.IsStablyGrounded());
     LOG_VAR_DEBUG(finalPhysics.groundedFrames);
