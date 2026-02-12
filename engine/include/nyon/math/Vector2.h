@@ -23,6 +23,9 @@ namespace Nyon::Math
         Vector2& operator*=(float scalar) { x *= scalar; y *= scalar; return *this; }
         Vector2& operator/=(float scalar) { x /= scalar; y /= scalar; return *this; }
 
+        // Setter method
+        void Set(float newX, float newY) { x = newX; y = newY; }
+
         float Length() const { return sqrt(x * x + y * y); }
         float LengthSquared() const { return x * x + y * y; }
         Vector2 Normalize() const 
