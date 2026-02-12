@@ -20,11 +20,12 @@ namespace Nyon
         ECSApplication(const char* title, int width, int height);
         virtual ~ECSApplication();
         
-    protected:
-        // ECS accessors for derived classes
+        // ECS accessors for derived classes and testing
         ECS::EntityManager& GetEntityManager() { return m_EntityManager; }
         ECS::ComponentStore& GetComponentStore() { return m_ComponentStore; }
         ECS::SystemManager& GetSystemManager() { return m_SystemManager; }
+        
+    protected:
         
         // Methods that can be overridden by games
         virtual void OnECSStart() {}  // Called after ECS initialization
