@@ -276,7 +276,6 @@ namespace Nyon::Utils
                                       const Math::Vector2& endPos,
                                       Math::Vector2& outMin, Math::Vector2& outMax);
 
-    private:
         // SAT algorithm helpers
         static Math::Vector2 GetEdgeNormal(const Math::Vector2& edge);
         static float DotProduct(const Math::Vector2& a, const Math::Vector2& b);
@@ -286,6 +285,8 @@ namespace Nyon::Utils
         static bool CheckOverlap(float min1, float max1, float min2, float max2);
         static float CalculateIntervalOverlap(float min1, float max1, float min2, float max2);
         static Math::Vector2 CalculatePolygonCenter(const Polygon& polygon, const Math::Vector2& pos);
+
+    private:
 
         // Ray-AABB intersection (used internally for CCD optimization)
         static bool RayAABBIntersection(const Math::Vector2& rayOrigin,
