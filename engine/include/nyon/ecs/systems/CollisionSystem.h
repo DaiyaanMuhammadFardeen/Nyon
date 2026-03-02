@@ -89,10 +89,14 @@ namespace Nyon::ECS
                     if (Utils::CollisionPhysics::CheckAABBCollision(minA, sizeA, minB, sizeB))
                     {
                         // Narrow-phase collision detection
+                        // Convert PolygonShape to std::vector<Vector2> for CollisionPhysics
+                        const auto& poly1 = collider.GetPolygon().vertices;
+                        const auto& poly2 = otherCollider.GetPolygon().vertices;
+                        
                         auto collisionResult = Utils::CollisionPhysics::CheckPolygonCollision(
-                            collider.GetPolygon(),
+                            poly1,
                             transform.position,
-                            otherCollider.GetPolygon(),
+                            poly2,
                             otherTransform.position
                         );
                         

@@ -4,6 +4,7 @@
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/ecs/components/RenderComponent.h"
 #include "nyon/graphics/Renderer2D.h"
+#include <glad/glad.h>
 
 namespace Nyon::ECS
 {
@@ -25,8 +26,8 @@ namespace Nyon::ECS
         {
             if (!m_EntityManager || !m_ComponentStore) return;
             
-            // Clear screen
-            glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
+            // Clear screen with dark blue background
+            glClearColor(0.1f, 0.1f, 0.3f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             
             Graphics::Renderer2D::BeginScene();

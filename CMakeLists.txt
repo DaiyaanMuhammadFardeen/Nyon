@@ -1,17 +1,14 @@
 cmake_minimum_required(VERSION 3.10)
-project(NyonRoot)
+project(Nyon)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Find required packages
-find_package(OpenGL REQUIRED)
-find_package(glfw3 REQUIRED)
-find_package(glm REQUIRED)
-
-# Add the engine and game subdirectories
+# Add subdirectories
 add_subdirectory(engine)
-add_subdirectory(game/smash-bros-clone)
+# add_subdirectory(test)  # Temporarily disabled due to CMake conflicts
+add_subdirectory(game/physics-demo)  # Add our new physics demo game
+
+# Main project executable (optional - can be removed if not needed)
+# add_executable(nyon_main src/main.cpp)
+# target_link_libraries(nyon_main nyon_engine)
 
 # Optional: Add testing subdirectory
 option(ENABLE_TESTING "Enable testing" ON)

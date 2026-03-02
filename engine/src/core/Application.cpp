@@ -1,4 +1,5 @@
 #include "nyon/core/Application.h"
+#include "nyon/graphics/Renderer2D.h"
 #include <iostream>
 
 namespace Nyon
@@ -17,6 +18,10 @@ namespace Nyon
     Application::~Application()
     {
         std::cerr << "[DEBUG] Application destructor called" << std::endl;
+        
+        // Shutdown Renderer2D
+        Graphics::Renderer2D::Shutdown();
+        
         glfwDestroyWindow(m_Window);
         glfwTerminate();
     }
@@ -55,6 +60,9 @@ namespace Nyon
         glViewport(0, 0, m_Width, m_Height);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Initialize Renderer2D with OpenGL context
+        Graphics::Renderer2D::Init();
 
         std::cout << "Nyon Engine initialized successfully!" << std::endl;
     }

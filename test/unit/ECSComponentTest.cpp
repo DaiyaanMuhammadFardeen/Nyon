@@ -265,7 +265,7 @@ TEST_F(RenderComponentTest, SetVisible_False)
  * 
  * Tests behavior attachment and update callbacks.
  */
-class BehaviorComponentTest : public ::testing::Test
+class ECSBehaviorComponentTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -281,7 +281,7 @@ protected:
 };
 
 // Update function tests
-TEST_F(BehaviorComponentTest, SetUpdateFunction)
+TEST_F(ECSBehaviorComponentTest, SetUpdateFunction)
 {
     LOG_FUNC_ENTER();
     bool updateCalled = false;

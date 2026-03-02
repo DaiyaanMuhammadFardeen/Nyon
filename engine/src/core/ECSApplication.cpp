@@ -1,7 +1,6 @@
 #include "nyon/core/ECSApplication.h"
 #include "nyon/ecs/systems/InputSystem.h"
-#include "nyon/ecs/systems/PhysicsSystem.h"
-#include "nyon/ecs/systems/CollisionSystem.h"
+// Removed legacy system includes
 #include "nyon/ecs/systems/RenderSystem.h"
 #include "nyon/utils/InputManager.h"
 #include <iostream>
@@ -31,8 +30,6 @@ namespace Nyon
         
         // Initialize ECS systems in proper order
         m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
-        m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsSystem>());
-        m_SystemManager.AddSystem(std::make_unique<ECS::CollisionSystem>());
         m_SystemManager.AddSystem(std::make_unique<ECS::RenderSystem>());
         
         m_ECSInitialized = true;

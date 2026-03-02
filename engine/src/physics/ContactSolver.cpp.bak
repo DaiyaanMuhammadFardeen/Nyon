@@ -1,0 +1,250 @@
+#include "nyon/physics/ContactSolver.h"
+#include <algorithm>
+#include <cmath>
+
+namespace Nyon::Physics {
+
+void ContactSolver::InitializeContacts(std::vector<ContactManifold>& contacts,
+                                     ECS::ComponentStore& componentStore)
+{
+    for (auto& contact : contacts)
+    {
+        // Get body components
+        auto& bodyA = componentStore.GetComponent<ECS::PhysicsBodyComponent>(contact.entityIdA);
+        auto& bodyB = componentStore.GetComponent<ECS::PhysicsBodyComponent>(contact.entityIdB);
+        auto& transformA = componentStore.GetComponent<ECS::TransformComponent>(contact.entityIdA);
+        auto& transformB = componentStore.GetComponent<ECS::TransformComponent>(contact.entityIdB);
+        
+        // Store mass properties
+        contact.invMassA = bodyA.inverseMass;
+        contact.invMassB = bodyB.inverseMass;
+        contact.invInertiaA = bodyA.inverseInertia;
+        contact.invInertiaB = bodyB.inverseInertia;
+        contact.friction = std::sqrt(bodyA.friction * bodyB.friction);
+        contact.restitution = std::sqrt(bodyA.restitution * bodyB.restitution);
+        
+        // Initialize contact points
+        for (auto& point : contact.points)
+        {
+            // Calculate relative positions from centers of mass
+            Math::Vector2 rA = point.position - transformA.position;
+            Math::Vector2 rB = point.position - transformB.position;
+            
+            // Calculate effective masses
+            point.normalMass = CalculateEffectiveMass(point.normal, rA, rB,
+                                                    contact.invMassA, contact.invMassB,
+                                                    contact.invInertiaA, contact.invInertiaB);
+            
+            // Tangent is perpendicular to normal
+            Math::Vector2 tangent = {-point.normal.y, point.normal.x};
+            point.tangentMass = CalculateEffectiveMass(tangent, rA, rB,
+                                                     contact.invMassA, contact.invMassB,
+                                                     contact.invInertiaA, contact.invInertiaB);
+            
+            // Baumgarte stabilization bias
+            const float baumgarte = 0.2f;
+            const float slop = 0.01f;
+            point.bias = baumgarte * std::max(0.0f, -point.separation - slop);
+            
+            // Initialize impulses to zero
+            point.normalImpulse = 0.0f;
+            point.tangentImpulse = 0.0f;
+        }
+    }
+}
+
+void ContactSolver::SolveVelocityConstraints(std::vector<ContactManifold>& contacts,
+                                           ECS::ComponentStore& componentStore,
+                                           int iterations)
+{
+    for (int iter = 0; iter < iterations; ++iter)
+    {
+        for (auto& contact : contacts)
+        {
+            auto& bodyA = componentStore.GetComponent<ECS::PhysicsBodyComponent>(contact.entityIdA);
+            auto& bodyB = componentStore.GetComponent<ECS::PhysicsBodyComponent>(contact.entityIdB);
+            auto& transformA = componentStore.GetComponent<ECS::TransformComponent>(contact.entityIdA);
+            auto& transformB = componentStore.GetComponent<ECS::TransformComponent>(contact.entityIdB);
+            
+            for (auto& point : contact.points)
+            {
+                // Calculate relative positions
+                Math::Vector2 rA = point.position - transformA.position;
+                Math::Vector2 rB = point.position - transformB.position;
+                
+                // Relative velocity at contact point
+                Math::Vector2 dv = bodyB.velocity + Math::Vector2{-bodyB.angularVelocity * rB.y, bodyB.angularVelocity * rB.x};
+                dv = dv - (bodyA.velocity + Math::Vector2{-bodyA.angularVelocity * rA.y, bodyA.angularVelocity * rA.x});
+                
+                // Velocity along normal
+                float vn = Math::Vector2::Dot(dv, point.normal);
+                
+                // Desired velocity change (restitution + bias)
+                float desiredDeltaVelocity = -vn + point.bias;
+                
+                // Restitution for separating velocities
+                if (vn < -1.0f) // Velocity threshold
+                {
+                    desiredDeltaVelocity += contact.restitution * vn;
+                }
+                
+                // Apply normal impulse
+                ApplyNormalImpulse(point, bodyA, bodyB, point.normal, rA, rB, desiredDeltaVelocity);
+                
+                // Friction
+                Math::Vector2 tangent = {-point.normal.y, point.normal.x};
+                float vt = Math::Vector2::Dot(dv, tangent);
+                float maxFriction = contact.friction * point.normalImpulse;
+                
+                ApplyFrictionImpulse(point, bodyA, bodyB, tangent, rA, rB, maxFriction);
+            }
+        }
+    }
+}
+
+void ContactSolver::SolvePositionConstraints(std::vector<ContactManifold>& contacts,
+                                           ECS::ComponentStore& componentStore,
+                                           int iterations)
+{
+    const float k_tolerance = 0.01f;
+    float totalError = 0.0f;
+    
+    for (int iter = 0; iter < iterations; ++iter)
+    {
+        float error = 0.0f;
+        
+        for (auto& contact : contacts)
+        {
+            auto& bodyA = componentStore.GetComponent<ECS::PhysicsBodyComponent>(contact.entityIdA);
+            auto& bodyB = componentStore.GetComponent<ECS::PhysicsBodyComponent>(contact.entityIdB);
+            auto& transformA = componentStore.GetComponent<ECS::TransformComponent>(contact.entityIdA);
+            auto& transformB = componentStore.GetComponent<ECS::TransformComponent>(contact.entityIdB);
+            
+            if (bodyA.isStatic && bodyB.isStatic) continue;
+            
+            for (auto& point : contact.points)
+            {
+                if (point.separation < -k_tolerance)
+                {
+                    // Positional correction
+                    float correction = 0.2f * (-point.separation);
+                    Math::Vector2 correctionVector = point.normal * correction;
+                    
+                    float totalInvMass = contact.invMassA + contact.invMassB;
+                    if (totalInvMass > 0.0f)
+                    {
+                        if (!bodyA.isStatic)
+                        {
+                            transformA.position = transformA.position - 
+                                correctionVector * (contact.invMassA / totalInvMass);
+                        }
+                        if (!bodyB.isStatic)
+                        {
+                            transformB.position = transformB.position + 
+                                correctionVector * (contact.invMassB / totalInvMass);
+                        }
+                    }
+                    
+                    error = std::max(error, -point.separation);
+                }
+            }
+        }
+        
+        totalError = error;
+        if (error < k_tolerance) break;
+    }
+}
+
+float ContactSolver::CalculateEffectiveMass(const Math::Vector2& normal,
+                                          const Math::Vector2& rA,
+                                          const Math::Vector2& rB,
+                                          float invMassA, float invMassB,
+                                          float invInertiaA, float invInertiaB)
+{
+    float rnA = Math::Vector2::Dot(rA, normal);
+    float rnB = Math::Vector2::Dot(rB, normal);
+    
+    float kNormal = invMassA + invMassB;
+    kNormal += invInertiaA * (Math::Vector2::Dot(rA, rA) - rnA * rnA);
+    kNormal += invInertiaB * (Math::Vector2::Dot(rB, rB) - rnB * rnB);
+    
+    return kNormal > 0.0f ? 1.0f / kNormal : 0.0f;
+}
+
+void ContactSolver::ApplyNormalImpulse(ContactPoint& point,
+                                     ECS::PhysicsBodyComponent& bodyA,
+                                     ECS::PhysicsBodyComponent& bodyB,
+                                     const Math::Vector2& normal,
+                                     const Math::Vector2& rA,
+                                     const Math::Vector2& rB,
+                                     float desiredDeltaVelocity)
+{
+    // Current velocity along normal
+    Math::Vector2 dv = bodyB.velocity + Math::Vector2{-bodyB.angularVelocity * rB.y, bodyB.angularVelocity * rB.x};
+    dv = dv - (bodyA.velocity + Math::Vector2{-bodyA.angularVelocity * rA.y, bodyA.angularVelocity * rA.x});
+    float currentVelocity = Math::Vector2::Dot(dv, normal);
+    
+    // Impulse needed
+    float deltaVelocity = desiredDeltaVelocity - currentVelocity;
+    float impulse = deltaVelocity * point.normalMass;
+    
+    // Accumulate impulse (clamp to prevent attraction)
+    float oldImpulse = point.normalImpulse;
+    point.normalImpulse = std::max(oldImpulse + impulse, 0.0f);
+    impulse = point.normalImpulse - oldImpulse;
+    
+    // Apply impulse
+    Math::Vector2 impulseVector = normal * impulse;
+    
+    if (!bodyA.isStatic)
+    {
+        bodyA.velocity = bodyA.velocity - impulseVector * bodyA.inverseMass;
+        bodyA.angularVelocity -= bodyA.inverseInertia * (rA.x * impulseVector.y - rA.y * impulseVector.x);
+    }
+    
+    if (!bodyB.isStatic)
+    {
+        bodyB.velocity = bodyB.velocity + impulseVector * bodyB.inverseMass;
+        bodyB.angularVelocity += bodyB.inverseInertia * (rB.x * impulseVector.y - rB.y * impulseVector.x);
+    }
+}
+
+void ContactSolver::ApplyFrictionImpulse(ContactPoint& point,
+                                       ECS::PhysicsBodyComponent& bodyA,
+                                       ECS::PhysicsBodyComponent& bodyB,
+                                       const Math::Vector2& tangent,
+                                       const Math::Vector2& rA,
+                                       const Math::Vector2& rB,
+                                       float maxFrictionImpulse)
+{
+    // Relative velocity along tangent
+    Math::Vector2 dv = bodyB.velocity + Math::Vector2{-bodyB.angularVelocity * rB.y, bodyB.angularVelocity * rB.x};
+    dv = dv - (bodyA.velocity + Math::Vector2{-bodyA.angularVelocity * rA.y, bodyA.angularVelocity * rA.x});
+    float vt = Math::Vector2::Dot(dv, tangent);
+    
+    // Friction impulse
+    float impulse = -vt * point.tangentMass;
+    
+    // Clamp friction impulse
+    float oldTangentImpulse = point.tangentImpulse;
+    point.tangentImpulse = std::clamp(oldTangentImpulse + impulse, 
+                                    -maxFrictionImpulse, maxFrictionImpulse);
+    impulse = point.tangentImpulse - oldTangentImpulse;
+    
+    // Apply friction impulse
+    Math::Vector2 impulseVector = tangent * impulse;
+    
+    if (!bodyA.isStatic)
+    {
+        bodyA.velocity = bodyA.velocity - impulseVector * bodyA.inverseMass;
+        bodyA.angularVelocity -= bodyA.inverseInertia * (rA.x * impulseVector.y - rA.y * impulseVector.x);
+    }
+    
+    if (!bodyB.isStatic)
+    {
+        bodyB.velocity = bodyB.velocity + impulseVector * bodyB.inverseMass;
+        bodyB.angularVelocity += bodyB.inverseInertia * (rB.x * impulseVector.y - rB.y * impulseVector.x);
+    }
+}
+
+} // namespace Nyon::Physics

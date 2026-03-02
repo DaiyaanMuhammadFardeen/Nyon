@@ -15,6 +15,7 @@ namespace Nyon::Math
         // Basic operations
         Vector2 operator+(const Vector2& other) const { return Vector2(x + other.x, y + other.y); }
         Vector2 operator-(const Vector2& other) const { return Vector2(x - other.x, y - other.y); }
+        Vector2 operator-() const { return Vector2(-x, -y); }  // Unary negation
         Vector2 operator*(float scalar) const { return Vector2(x * scalar, y * scalar); }
         Vector2 operator/(float scalar) const { return Vector2(x / scalar, y / scalar); }
 
@@ -33,6 +34,12 @@ namespace Nyon::Math
             float len = Length();
             if (len > 0.0f) return Vector2(x / len, y / len);
             return Vector2(0.0f, 0.0f);
+        }
+        
+        // Static utility functions
+        static float Dot(const Vector2& a, const Vector2& b)
+        {
+            return a.x * b.x + a.y * b.y;
         }
     };
 }

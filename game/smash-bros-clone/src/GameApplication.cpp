@@ -1,10 +1,16 @@
 #include "GameApplication.h"
+#include "nyon/ecs/systems/PhysicsWorldComponent.h"
+#include "nyon/ecs/systems/ConstraintSolverSystem.h"
+#include "nyon/ecs/systems/CollisionPipelineSystem.h"
+#include "nyon/ecs/systems/TransformPhysicsSyncSystem.h"
+#include "nyon/ecs/systems/DebugRenderSystem.h"
 #include <iostream>
 #include <cmath>
 
 GameApplication::GameApplication()
-    : ECSApplication("Smash Bros Clone - ECS Version", 1280, 720)
+    : ECSApplication("Nyon Physics Demo - Box2D Inspired", 1280, 720)
       , m_PlayerEntity(Nyon::ECS::INVALID_ENTITY)
+      , m_ShowDebugPhysics(true)
 {
     std::cerr << "[DEBUG] GameApplication constructor called" << std::endl;
     std::cout << "Game application initialized with ECS" << std::endl;
@@ -14,13 +20,17 @@ void GameApplication::OnECSStart()
 {
     std::cerr << "[DEBUG] GameApplication::OnECSStart() called" << std::endl;
 
+    // Setup physics world
+    SetupPhysicsWorld();
+    
     // Create game entities
     CreatePlayer();
-    CreatePlatforms();
+    CreatePhysicsDemoScene();
 
     // Setup behaviors
     SetupPlayerBehavior();
     SetupPlatformBehaviors();
+    SetupDebugControls();
 
     std::cerr << "[DEBUG] GameApplication::OnECSStart() completed" << std::endl;
 }
@@ -201,4 +211,219 @@ void GameApplication::SetupPlayerBehavior()
 void GameApplication::SetupPlatformBehaviors()
 {
     // Platforms are static, so they don't need behaviors
+}
+
+void GameApplication::SetupPhysicsWorld()
+{
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
+    
+    // Create physics world entity
+    Nyon::ECS::EntityID worldEntity = entityManager.CreateEntity();
+    m_PhysicsWorld = componentStore.AddComponent<Nyon::ECS::PhysicsWorldComponent>(worldEntity);
+    
+    // Configure physics world
+    m_PhysicsWorld->gravity = Nyon::Math::Vector2{0.0f, 980.0f};
+    m_PhysicsWorld->timeStep = 1.0f / 60.0f;
+    m_PhysicsWorld->velocityIterations = 8;
+    m_PhysicsWorld->positionIterations = 3;
+    
+    // Enable debug visualization
+    m_PhysicsWorld->drawShapes = m_ShowDebugPhysics;
+    m_PhysicsWorld->drawAABBs = false;
+    m_PhysicsWorld->drawContacts = false;
+    
+    std::cout << "Physics world configured\n";
+}
+
+void GameApplication::CreatePhysicsDemoScene()
+{
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
+    
+    // Create ground platform
+    CreateGroundPlatform();
+    
+    // Create falling objects
+    CreateFallingObjects();
+    
+    // Create stacked boxes
+    CreateStackedBoxes();
+    
+    // Create rolling ball
+    CreateRollingBall();
+    
+    std::cout << "Created physics demo scene with " << m_PhysicsEntities.size() << " entities\n";
+}
+
+void GameApplication::CreateGroundPlatform()
+{
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
+    
+    Nyon::ECS::EntityID groundEntity = entityManager.CreateEntity();
+    m_PhysicsEntities.push_back(groundEntity);
+    
+    // Transform
+    Nyon::ECS::TransformComponent transform({0.0f, 500.0f});
+    componentStore.AddComponent(groundEntity, std::move(transform));
+    
+    // Static physics body
+    Nyon::ECS::PhysicsBodyComponent physics(0.0f, true);
+    physics.friction = 0.8f;
+    componentStore.AddComponent(groundEntity, std::move(physics));
+    
+    // Ground collider
+    Nyon::ECS::ColliderComponent::PolygonShape groundShape = {
+        {-1000.0f, 0.0f}, {1000.0f, 0.0f},
+        {1000.0f, 32.0f}, {-1000.0f, 32.0f}
+    };
+    Nyon::ECS::ColliderComponent collider(groundShape);
+    collider.color = {0.5f, 0.5f, 0.5f}; // Gray
+    componentStore.AddComponent(groundEntity, std::move(collider));
+    
+    // Render component
+    Nyon::ECS::RenderComponent render({2000.0f, 32.0f}, {0.5f, 0.5f, 0.5f});
+    componentStore.AddComponent(groundEntity, std::move(render));
+}
+
+void GameApplication::CreateFallingObjects()
+{
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
+    
+    // Create boxes at different positions
+    std::vector<Nyon::Math::Vector2> positions = {
+        {100.0f, 100.0f}, {150.0f, 50.0f}, {200.0f, 75.0f},
+        {250.0f, 25.0f}, {300.0f, 125.0f}
+    };
+    
+    for (const auto& pos : positions)
+    {
+        Nyon::ECS::EntityID boxEntity = entityManager.CreateEntity();
+        m_PhysicsEntities.push_back(boxEntity);
+        
+        // Transform
+        Nyon::ECS::TransformComponent transform(pos);
+        componentStore.AddComponent(boxEntity, std::move(transform));
+        
+        // Dynamic physics body
+        Nyon::ECS::PhysicsBodyComponent physics(1.0f, false);
+        physics.friction = 0.3f;
+        physics.restitution = 0.2f;
+        componentStore.AddComponent(boxEntity, std::move(physics));
+        
+        // Box collider
+        Nyon::ECS::ColliderComponent::PolygonShape boxShape = {
+            {-16.0f, -16.0f}, {16.0f, -16.0f},
+            {16.0f, 16.0f}, {-16.0f, 16.0f}
+        };
+        Nyon::ECS::ColliderComponent collider(boxShape);
+        collider.color = {0.0f, 1.0f, 0.0f}; // Green
+        componentStore.AddComponent(boxEntity, std::move(collider));
+        
+        // Render component
+        Nyon::ECS::RenderComponent render({32.0f, 32.0f}, {0.0f, 1.0f, 0.0f});
+        componentStore.AddComponent(boxEntity, std::move(render));
+    }
+}
+
+void GameApplication::CreateStackedBoxes()
+{
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
+    
+    // Stack 5 boxes vertically
+    Nyon::Math::Vector2 basePos(400.0f, 400.0f);
+    for (int i = 0; i < 5; ++i)
+    {
+        Nyon::ECS::EntityID boxEntity = entityManager.CreateEntity();
+        m_PhysicsEntities.push_back(boxEntity);
+        
+        Nyon::Math::Vector2 pos = basePos - Nyon::Math::Vector2{0.0f, static_cast<float>(i * 34)};
+        
+        // Transform
+        Nyon::ECS::TransformComponent transform(pos);
+        componentStore.AddComponent(boxEntity, std::move(transform));
+        
+        // Dynamic physics body
+        Nyon::ECS::PhysicsBodyComponent physics(2.0f, false);
+        physics.friction = 0.4f;
+        physics.restitution = 0.1f;
+        componentStore.AddComponent(boxEntity, std::move(physics));
+        
+        // Box collider
+        Nyon::ECS::ColliderComponent::PolygonShape boxShape = {
+            {-20.0f, -20.0f}, {20.0f, -20.0f},
+            {20.0f, 20.0f}, {-20.0f, 20.0f}
+        };
+        Nyon::ECS::ColliderComponent collider(boxShape);
+        collider.color = {1.0f, 1.0f, 0.0f}; // Yellow
+        componentStore.AddComponent(boxEntity, std::move(collider));
+        
+        // Render component
+        Nyon::ECS::RenderComponent render({40.0f, 40.0f}, {1.0f, 1.0f, 0.0f});
+        componentStore.AddComponent(boxEntity, std::move(render));
+    }
+}
+
+void GameApplication::CreateRollingBall()
+{
+    auto& entityManager = GetEntityManager();
+    auto& componentStore = GetComponentStore();
+    
+    Nyon::ECS::EntityID ballEntity = entityManager.CreateEntity();
+    m_PhysicsEntities.push_back(ballEntity);
+    
+    // Transform
+    Nyon::ECS::TransformComponent transform({500.0f, 300.0f});
+    componentStore.AddComponent(ballEntity, std::move(transform));
+    
+    // Dynamic physics body
+    Nyon::ECS::PhysicsBodyComponent physics(0.5f, false);
+    physics.friction = 0.2f;
+    physics.restitution = 0.6f;
+    componentStore.AddComponent(ballEntity, std::move(physics));
+    
+    // Circle collider
+    Nyon::ECS::ColliderComponent collider(16.0f);
+    collider.color = {1.0f, 0.0f, 0.0f}; // Red
+    componentStore.AddComponent(ballEntity, std::move(collider));
+    
+    // Render component
+    Nyon::ECS::RenderComponent render({32.0f, 32.0f}, {1.0f, 0.0f, 0.0f});
+    componentStore.AddComponent(ballEntity, std::move(render));
+}
+
+void GameApplication::SetupDebugControls()
+{
+    auto& componentStore = GetComponentStore();
+    
+    // Create behavior component for debug controls
+    Nyon::ECS::BehaviorComponent behavior;
+    
+    behavior.SetUpdateFunction([this](Nyon::ECS::EntityID entity, float deltaTime) {
+        // Toggle debug visualization
+        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_F1))
+        {
+            m_ShowDebugPhysics = !m_ShowDebugPhysics;
+            if (m_PhysicsWorld)
+            {
+                m_PhysicsWorld->drawShapes = m_ShowDebugPhysics;
+            }
+            std::cout << "Debug visualization " << (m_ShowDebugPhysics ? "enabled" : "disabled") << "\n";
+        }
+        
+        // Reset scene
+        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_R))
+        {
+            std::cout << "Resetting physics scene...\n";
+            // In a real implementation, this would recreate entities
+        }
+    });
+    
+    // Add to a dummy entity for global controls
+    auto& entityManager = GetEntityManager();
+    Nyon::ECS::EntityID controlEntity = entityManager.CreateEntity();
+    componentStore.AddComponent(controlEntity, std::move(behavior));
 }
