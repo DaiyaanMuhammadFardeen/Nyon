@@ -569,18 +569,12 @@ TEST_F(BehaviorComponentTest, GamingScenario_PlayerMovement)
         if (/* input left */ false) targetSpeedX = -playerState->speed;
         if (/* input right */ true) targetSpeedX = playerState->speed; // Simulate right input
         
-        // Apply acceleration with proper clamping
-        float acceleration = 2000.0f;
-        float velocityChange = (targetSpeedX - playerState->velocity.x) * acceleration * deltaTime;
-        playerState->velocity.x += velocityChange;
-        
-        // Clamp velocity to prevent explosion
-        float maxSpeed = playerState->speed * 1.5f; // Allow 50% over speed for acceleration
-        if (playerState->velocity.x > maxSpeed) {
-            playerState->velocity.x = maxSpeed;
-        } else if (playerState->velocity.x < -maxSpeed) {
-            playerState->velocity.x = -maxSpeed;
-        }
+        // Simple acceleration model: move velocity toward target without overshooting
+        const float maxDelta = 500.0f * deltaTime;
+        float delta = targetSpeedX - playerState->velocity.x;
+        if (delta > maxDelta) delta = maxDelta;
+        else if (delta < -maxDelta) delta = -maxDelta;
+        playerState->velocity.x += delta;
         
         // Apply velocity to position
         playerState->position.x += playerState->velocity.x * deltaTime;

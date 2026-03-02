@@ -99,7 +99,7 @@ TEST_F(PhysicsBodyComponentTest, Constructor_Default)
     LOG_VAR_DEBUG(defaultBody.mass);
     LOG_VAR_DEBUG(defaultBody.friction);
     LOG_VAR_DEBUG(defaultBody.drag);
-    LOG_VAR_DEBUG(defaultBody.maxSpeed);
+    LOG_VAR_DEBUG(defaultBody.maxLinearSpeed);
     LOG_VAR_DEBUG(defaultBody.isStatic);
     LOG_VAR_DEBUG(defaultBody.isGrounded);
     LOG_VAR_DEBUG(defaultBody.groundedFrames);
@@ -107,7 +107,7 @@ TEST_F(PhysicsBodyComponentTest, Constructor_Default)
     EXPECT_FLOAT_EQ(defaultBody.mass, 1.0f);
     EXPECT_FLOAT_EQ(defaultBody.friction, 0.1f);
     EXPECT_FLOAT_EQ(defaultBody.drag, 0.0f);
-    EXPECT_FLOAT_EQ(defaultBody.maxSpeed, 1000.0f);
+    EXPECT_FLOAT_EQ(defaultBody.maxLinearSpeed, 1000.0f);
     EXPECT_FALSE(defaultBody.isStatic);
     EXPECT_FALSE(defaultBody.isGrounded);
     EXPECT_EQ(defaultBody.groundedFrames, 0);
@@ -133,9 +133,12 @@ TEST_F(PhysicsBodyComponentTest, Constructor_WithMassAndStatic)
     PhysicsBodyComponent staticBody(mass, isStatic);
     
     LOG_VAR_DEBUG(staticBody.mass);
+    LOG_VAR_DEBUG(staticBody.inverseMass);
     LOG_VAR_DEBUG(staticBody.isStatic);
-    EXPECT_FLOAT_EQ(staticBody.mass, mass);
+    // Static bodies are treated as having infinite mass in the simulation
     EXPECT_TRUE(staticBody.isStatic);
+    EXPECT_FLOAT_EQ(staticBody.mass, 0.0f);
+    EXPECT_FLOAT_EQ(staticBody.inverseMass, 0.0f);
     LOG_FUNC_EXIT();
 }
 

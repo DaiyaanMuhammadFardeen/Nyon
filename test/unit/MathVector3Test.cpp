@@ -220,6 +220,7 @@ TEST_F(Vector3Test, LargeNumbers)
     Vector3 large(1e6f, 1e6f, 1e6f);
     float length = large.Length();
     LOG_VAR_DEBUG(length);
-    EXPECT_FLOAT_NEAR(length, 1e6f * std::sqrt(3.0f), 1e-1f);
+    // Allow slightly larger tolerance due to single-precision rounding at large magnitudes
+    EXPECT_FLOAT_NEAR(length, 1e6f * std::sqrt(3.0f), 2e-1f);
     LOG_FUNC_EXIT();
 }

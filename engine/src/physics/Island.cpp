@@ -80,8 +80,9 @@ namespace Nyon::Physics
                 joint.type == ECS::JointComponent::Type::Revolute ||
                 joint.type == ECS::JointComponent::Type::Prismatic)
             {
-                ECS::EntityID bodyA = joint.distanceJoint.bodyA;
-                ECS::EntityID bodyB = joint.distanceJoint.bodyB;
+                // Use the generic joint endpoints stored on the component
+                ECS::EntityID bodyA = joint.entityIdA;
+                ECS::EntityID bodyB = joint.entityIdB;
                 
                 if (m_ComponentStore.HasComponent<ECS::PhysicsBodyComponent>(bodyA) &&
                     m_ComponentStore.HasComponent<ECS::PhysicsBodyComponent>(bodyB))

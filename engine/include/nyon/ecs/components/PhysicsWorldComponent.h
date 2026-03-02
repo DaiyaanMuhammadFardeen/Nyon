@@ -18,7 +18,7 @@ namespace Nyon::ECS
     struct PhysicsWorldComponent
     {
         // === SIMULATION SETTINGS ===
-        Math::Vector2 gravity = {0.0f, 98.0f};      // Gravity vector (pixels/sec²) - reduced from 980
+        Math::Vector2 gravity = {0.0f, 980.0f};      // Gravity vector (pixels/sec²) - reduced from 980
         float timeStep = 1.0f / 60.0f;              // Fixed time step (seconds)
         int velocityIterations = 8;                 // Velocity constraint solver iterations
         int positionIterations = 3;                 // Position constraint solver iterations

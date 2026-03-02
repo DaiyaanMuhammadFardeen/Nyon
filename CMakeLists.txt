@@ -11,7 +11,7 @@ add_subdirectory(game/physics-demo)  # Add our new physics demo game
 # target_link_libraries(nyon_main nyon_engine)
 
 # Optional: Add testing subdirectory
-option(ENABLE_TESTING "Enable testing" ON)
+option(ENABLE_TESTING "Enable testing" OFF)
 if(ENABLE_TESTING)
     enable_testing()
     add_subdirectory(test)

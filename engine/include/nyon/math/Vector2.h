@@ -41,5 +41,24 @@ namespace Nyon::Math
         {
             return a.x * b.x + a.y * b.y;
         }
+
+        // 2D cross product helpers (matching Box2D-style utilities)
+        // Scalar result: cross(a, b) = a.x * b.y - a.y * b.x
+        static float Cross(const Vector2& a, const Vector2& b)
+        {
+            return a.x * b.y - a.y * b.x;
+        }
+
+        // Vector result: cross(s, v) = s × v = ( -s * v.y, s * v.x )
+        static Vector2 Cross(float s, const Vector2& v)
+        {
+            return Vector2(-s * v.y, s * v.x);
+        }
+
+        // Vector result: cross(v, s) = v × s = (  s * v.y, -s * v.x )
+        static Vector2 Cross(const Vector2& v, float s)
+        {
+            return Vector2(s * v.y, -s * v.x);
+        }
     };
 }

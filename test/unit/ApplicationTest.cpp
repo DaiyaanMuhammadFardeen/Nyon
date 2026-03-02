@@ -440,8 +440,13 @@ TEST_F(ApplicationTest, EdgeCase_ManyComponents)
 
     componentStore.AddComponent(entity, Nyon::ECS::TransformComponent(Nyon::Math::Vector2(0.0f, 0.0f)));
     componentStore.AddComponent(entity, Nyon::ECS::PhysicsBodyComponent(1.0f, false));
-
-    Nyon::ECS::ColliderComponent::PolygonShape shape = {{0.0f, 0.0f}, {32.0f, 0.0f}, {32.0f, 32.0f}, {0.0f, 32.0f}};
+    
+    Nyon::ECS::ColliderComponent::PolygonShape shape({
+        {0.0f, 0.0f},
+        {32.0f, 0.0f},
+        {32.0f, 32.0f},
+        {0.0f, 32.0f}
+    });
     componentStore.AddComponent(entity, Nyon::ECS::ColliderComponent(shape));
 
     componentStore.AddComponent(entity, Nyon::ECS::RenderComponent({32.0f, 32.0f}));
@@ -603,13 +608,13 @@ TEST_F(ApplicationTest, GamingScenario_PlatformerSetup)
 
         componentStore.AddComponent(entity, Nyon::ECS::TransformComponent(obj.position));
         componentStore.AddComponent(entity, Nyon::ECS::PhysicsBodyComponent(1.0f, obj.isStatic));
-
-        Nyon::ECS::ColliderComponent::PolygonShape shape = {
+        
+        Nyon::ECS::ColliderComponent::PolygonShape shape({
             {0.0f, 0.0f},
             {obj.size.x, 0.0f},
             {obj.size.x, obj.size.y},
             {0.0f, obj.size.y}
-        };
+        });
         componentStore.AddComponent(entity, Nyon::ECS::ColliderComponent(shape));
         componentStore.AddComponent(entity, Nyon::ECS::RenderComponent(obj.size));
 

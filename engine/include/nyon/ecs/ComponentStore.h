@@ -6,6 +6,7 @@
 #include <memory>
 #include <cassert>
 #include <algorithm>  // For std::find and std::remove
+#include <unordered_map>
 
 namespace Nyon::ECS
 {
@@ -68,7 +69,7 @@ namespace Nyon::ECS
                 {
                     return entityIds[index];
                 }
-                return INVALID_ENTITY_ID;
+                return INVALID_ENTITY;
             }
             
             size_t GetComponentCount() const override

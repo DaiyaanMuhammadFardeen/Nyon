@@ -93,10 +93,6 @@ namespace Nyon::ECS
             body.velocity = solverBody.velocity;
             body.angularVelocity = solverBody.angularVelocity;
             
-            // Apply damping
-            body.velocity = body.velocity * (1.0f - body.linearDamping * deltaTime);
-            body.angularVelocity = body.angularVelocity * (1.0f - body.angularDamping * deltaTime);
-            
             // Clamp speeds
             float linearSpeedSq = body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y;
             if (linearSpeedSq > body.maxLinearSpeed * body.maxLinearSpeed)

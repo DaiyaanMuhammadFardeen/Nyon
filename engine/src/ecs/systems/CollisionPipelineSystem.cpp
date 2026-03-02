@@ -134,10 +134,10 @@ namespace Nyon::ECS
     
     void CollisionPipelineSystem::UpdateContacts()
     {
-        // Process active contact pairs
+        // Process active contact pairs: detect overlap and resolve it immediately.
         for (const auto& pair : m_ActivePairs)
         {
-            // Get components for both entities
+            // Require all necessary components
             if (!m_ComponentStore->HasComponent<TransformComponent>(pair.entityIdA) ||
                 !m_ComponentStore->HasComponent<TransformComponent>(pair.entityIdB) ||
                 !m_ComponentStore->HasComponent<PhysicsBodyComponent>(pair.entityIdA) ||
@@ -148,45 +148,125 @@ namespace Nyon::ECS
                 continue;
             }
             
-            // Get const references for reading
-            const auto& transformA = m_ComponentStore->GetComponent<TransformComponent>(pair.entityIdA);
-            const auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(pair.entityIdB);
-            const auto& bodyA = m_ComponentStore->GetComponent<PhysicsBodyComponent>(pair.entityIdA);
-            const auto& bodyB = m_ComponentStore->GetComponent<PhysicsBodyComponent>(pair.entityIdB);
+            // Get mutable references so we can resolve the collision
+            auto& transformA = m_ComponentStore->GetComponent<TransformComponent>(pair.entityIdA);
+            auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(pair.entityIdB);
+            auto& bodyA = m_ComponentStore->GetComponent<PhysicsBodyComponent>(pair.entityIdA);
+            auto& bodyB = m_ComponentStore->GetComponent<PhysicsBodyComponent>(pair.entityIdB);
             const auto& colliderA = m_ComponentStore->GetComponent<ColliderComponent>(pair.entityIdA);
             const auto& colliderB = m_ComponentStore->GetComponent<ColliderComponent>(pair.entityIdB);
             
-            // Simple AABB intersection test for basic collision detection
+            // Skip if neither body should participate
+            if (!bodyA.ShouldCollide() && !bodyB.ShouldCollide())
+                continue;
+            
+            // Simple AABB intersection test
             Math::Vector2 minA, maxA, minB, maxB;
             colliderA.CalculateAABB(transformA.position, minA, maxA);
             colliderB.CalculateAABB(transformB.position, minB, maxB);
             
-            // Check for AABB overlap
-            if (minA.x < maxB.x && maxA.x > minB.x && 
-                minA.y < maxB.y && maxA.y > minB.y)
+            if (!(minA.x < maxB.x && maxA.x > minB.x && 
+                  minA.y < maxB.y && maxA.y > minB.y))
             {
-                // COLLISION DETECTED - but don't resolve here
-                // Let the ContinuousCollisionSystem handle resolution
-                // This prevents conflicts between collision systems
+                continue;
+            }
+            
+            // Compute overlap and normal using minimum-penetration axis
+            Math::Vector2 centerA = (minA + maxA) * 0.5f;
+            Math::Vector2 centerB = (minB + maxB) * 0.5f;
+            Math::Vector2 delta = centerB - centerA;
+            
+            Math::Vector2 halfSizeA = (maxA - minA) * 0.5f;
+            Math::Vector2 halfSizeB = (maxB - minB) * 0.5f;
+            
+            float overlapX = (halfSizeA.x + halfSizeB.x) - std::abs(delta.x);
+            float overlapY = (halfSizeA.y + halfSizeB.y) - std::abs(delta.y);
+            
+            if (overlapX <= 0.0f || overlapY <= 0.0f)
+                continue;
+            
+            Math::Vector2 normal;
+            float penetration;
+            if (overlapX < overlapY)
+            {
+                normal = (delta.x > 0.0f) ? Math::Vector2{1.0f, 0.0f} : Math::Vector2{-1.0f, 0.0f};
+                penetration = overlapX;
+            }
+            else
+            {
+                normal = (delta.y > 0.0f) ? Math::Vector2{0.0f, 1.0f} : Math::Vector2{0.0f, -1.0f};
+                penetration = overlapY;
+            }
+            
+            // Positional correction using inverse masses
+            float invMassA = bodyA.inverseMass;
+            float invMassB = bodyB.inverseMass;
+            float totalInvMass = invMassA + invMassB;
+            if (totalInvMass > 0.0f)
+            {
+                const float baumgarte = 0.6f;
+                Math::Vector2 correction = normal * (penetration * baumgarte / totalInvMass);
                 
-                // For debugging: print when collisions are detected
-                // std::cout << "[COLLISION DETECTED] Between entities " << pair.entityIdA 
-                //           << " and " << pair.entityIdB << std::endl;
-                
-                // Create contact constraint
-                ContactPair contactKey{pair.entityIdA, pair.entityIdB, pair.shapeIdA, pair.shapeIdB};
-                
-                if (m_ContactMap.find(contactKey) == m_ContactMap.end())
+                if (!bodyA.isStatic)
                 {
-                    // New contact - create contact constraint
-                    uint32_t contactId = static_cast<uint32_t>(m_ContactMap.size());
-                    m_ContactMap[contactKey] = contactId;
+                    transformA.position = transformA.position - correction * invMassA;
+                }
+                if (!bodyB.isStatic)
+                {
+                    transformB.position = transformB.position + correction * invMassB;
+                }
+            }
+            
+            // Velocity resolution (impulse-based)
+            Math::Vector2 relativeVel = bodyB.velocity - bodyA.velocity;
+            float velAlongNormal = Math::Vector2::Dot(relativeVel, normal);
+            
+            // If velocities are separating, skip impulse but keep positional fix
+            if (velAlongNormal < 0.0f)
+            {
+                float restitution = std::sqrt(bodyA.restitution * bodyB.restitution);
+                float j = -(1.0f + restitution) * velAlongNormal;
+                float massTerm = invMassA + invMassB;
+                if (massTerm > 0.0f)
+                {
+                    j /= massTerm;
+                    Math::Vector2 impulse = normal * j;
                     
-                    // Call begin contact callback
-                    if (m_PhysicsWorld->callbacks.beginContact)
+                    if (!bodyA.isStatic)
                     {
-                        m_PhysicsWorld->callbacks.beginContact(pair.entityIdA, pair.entityIdB);
+                        bodyA.velocity = bodyA.velocity - impulse * invMassA;
                     }
+                    if (!bodyB.isStatic)
+                    {
+                        bodyB.velocity = bodyB.velocity + impulse * invMassB;
+                    }
+                }
+            }
+            
+            // Grounded state: if dynamic body resting on static ground with upward normal (y-down coords)
+            auto markGroundedIfApplicable = [&](PhysicsBodyComponent& dynBody,
+                                                 const PhysicsBodyComponent& otherBody,
+                                                 const Math::Vector2& n)
+            {
+                if (!dynBody.isStatic && otherBody.isStatic && n.y < -0.7f)
+                {
+                    dynBody.UpdateGroundedState(true);
+                }
+            };
+            
+            markGroundedIfApplicable(bodyA, bodyB, normal);
+            markGroundedIfApplicable(bodyB, bodyA, -normal);
+            
+            // Manage contact callbacks
+            ContactPair contactKey{pair.entityIdA, pair.entityIdB, pair.shapeIdA, pair.shapeIdB};
+            if (m_ContactMap.find(contactKey) == m_ContactMap.end())
+            {
+                uint32_t contactId = static_cast<uint32_t>(m_ContactMap.size());
+                m_ContactMap[contactKey] = contactId;
+                
+                if (m_PhysicsWorld->callbacks.beginContact)
+                {
+                    m_PhysicsWorld->callbacks.beginContact(pair.entityIdA, pair.entityIdB);
                 }
             }
         }

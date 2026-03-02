@@ -149,7 +149,8 @@ namespace Nyon::ECS
         for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
         {
             callback.entityId = entityId;
-            m_BroadPhaseTree.Query(proxyId, &callback);
+            const auto& aabb = m_BroadPhaseTree.GetFatAABB(proxyId);
+            m_BroadPhaseTree.Query(aabb, &callback);
         }
         
         m_Stats.broadPhasePairs = m_BroadPhasePairs.size();

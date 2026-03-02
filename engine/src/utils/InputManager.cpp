@@ -109,8 +109,12 @@ namespace Nyon::Utils
 
     bool InputManager::IsKeyUp(int key)
     {
-        if (s_Window == nullptr || key < 0 || key >= GLFW_KEY_LAST) {
+        if (key < 0 || key >= GLFW_KEY_LAST) {
             return false;
+        }
+        // When no window is available, treat all keys as up
+        if (s_Window == nullptr) {
+            return true;
         }
         return !s_CurrentKeys[key];
     }
@@ -133,8 +137,12 @@ namespace Nyon::Utils
 
     bool InputManager::IsMouseUp(int button)
     {
-        if (s_Window == nullptr || button < 0 || button >= GLFW_MOUSE_BUTTON_LAST) {
+        if (button < 0 || button >= GLFW_MOUSE_BUTTON_LAST) {
             return false;
+        }
+        // When no window is available, treat all buttons as up
+        if (s_Window == nullptr) {
+            return true;
         }
         return !s_CurrentMouseButtons[button];
     }

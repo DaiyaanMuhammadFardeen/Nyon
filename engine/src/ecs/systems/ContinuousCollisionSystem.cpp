@@ -25,44 +25,6 @@ void ContinuousCollisionSystem::PerformCCD(
     Math::Vector2 predictedPosA = transformA.position + bodyA.velocity * deltaTime;
     Math::Vector2 predictedPosB = transformB.position + bodyB.velocity * deltaTime;
     
-    // Swept broad phase: Expand AABB by motion path for the frame
-    Math::Vector2 minA, maxA, minB, maxB;
-    colliderA.CalculateAABB(transformA.position, minA, maxA);
-    colliderB.CalculateAABB(transformB.position, minB, maxB);
-    
-    // Calculate swept AABB endpoints
-    Math::Vector2 minA_end, maxA_end, minB_end, maxB_end;
-    colliderA.CalculateAABB(predictedPosA, minA_end, maxA_end);
-    colliderB.CalculateAABB(predictedPosB, minB_end, maxB_end);
-    
-    // Expand AABBs by swept path
-    Math::Vector2 sweptMinA = {
-        std::min(minA.x, minA_end.x),
-        std::min(minA.y, minA_end.y)
-    };
-    Math::Vector2 sweptMaxA = {
-        std::max(maxA.x, maxA_end.x),
-        std::max(maxA.y, maxA_end.y)
-    };
-    
-    Math::Vector2 sweptMinB = {
-        std::min(minB.x, minB_end.x),
-        std::min(minB.y, minB_end.y)
-    };
-    Math::Vector2 sweptMaxB = {
-        std::max(maxB.x, maxB_end.x),
-        std::max(maxB.y, maxB_end.y)
-    };
-    
-    // Check for swept AABB overlap
-    if (sweptMinA.x >= sweptMaxB.x || sweptMaxA.x <= sweptMinB.x || 
-        sweptMinA.y >= sweptMaxB.y || sweptMaxA.y <= sweptMinB.y)
-    {
-        return; // No overlap in swept path, skip CCD
-    }
-    
-    // Use already calculated predicted positions
-    
     // Calculate time of impact using swept AABB collision detection
     float toi = 1.0f; // Default to end of frame
     
