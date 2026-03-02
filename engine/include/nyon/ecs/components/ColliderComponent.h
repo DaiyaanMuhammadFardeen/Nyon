@@ -6,6 +6,7 @@
 #include <variant>
 #include <string>
 #include <cstdint>
+#include <algorithm>
 
 namespace Nyon::ECS
 {
@@ -52,25 +53,67 @@ namespace Nyon::ECS
             {
                 if (vertices.empty()) return;
                 
-                // Calculate centroid
-                centroid = {0.0f, 0.0f};
-                for (const auto& vertex : vertices) {
-                    centroid = centroid + vertex;
+                // Validate and enforce counter-clockwise winding order
+                // This ensures face normals point outward consistently
+                if (!IsCounterClockwise()) {
+                    // Reverse vertex order to make it counter-clockwise
+                    std::reverse(vertices.begin(), vertices.end());
                 }
-                centroid = centroid * (1.0f / vertices.size());
                 
-                // Calculate normals
+                // Calculate true polygon centroid using area-weighted formula (shoelace method)
+                // This fixes angular dynamics errors for irregular polygons
+                centroid = {0.0f, 0.0f};
+                float signedArea = 0.0f;
+                
+                size_t n = vertices.size();
+                for (size_t i = 0; i < n; ++i) {
+                    size_t j = (i + 1) % n;
+                    float cross = vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
+                    signedArea += cross;
+                    centroid.x += (vertices[i].x + vertices[j].x) * cross;
+                    centroid.y += (vertices[i].y + vertices[j].y) * cross;
+                }
+                
+                if (std::abs(signedArea) > 0.0001f) {
+                    centroid = centroid * (1.0f / (6.0f * (signedArea * 0.5f)));
+                } else {
+                    // Fallback to vertex average for degenerate cases
+                    centroid = {0.0f, 0.0f};
+                    for (const auto& vertex : vertices) {
+                        centroid = centroid + vertex;
+                    }
+                    centroid = centroid * (1.0f / vertices.size());
+                }
+                
+                // Calculate normals with proper outward direction enforcement
                 normals.clear();
                 for (size_t i = 0; i < vertices.size(); ++i) {
                     size_t next = (i + 1) % vertices.size();
                     Math::Vector2 edge = vertices[next] - vertices[i];
-                    Math::Vector2 normal = {-edge.y, edge.x}; // Perpendicular
+                    Math::Vector2 normal = {-edge.y, edge.x}; // Perpendicular CCW
                     float length = sqrt(normal.x * normal.x + normal.y * normal.y);
                     if (length > 0.0001f) {
                         normal = normal * (1.0f / length);
                         normals.push_back(normal);
                     }
                 }
+            }
+            
+            // Helper method to check winding order
+            bool IsCounterClockwise() const
+            {
+                if (vertices.size() < 3) return true;
+                
+                // Calculate signed area using shoelace formula
+                float area = 0.0f;
+                size_t n = vertices.size();
+                for (size_t i = 0; i < n; ++i) {
+                    size_t j = (i + 1) % n;
+                    area += vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
+                }
+                
+                // Positive area = counter-clockwise, negative = clockwise
+                return area > 0.0f;
             }
         };
         
@@ -203,7 +246,7 @@ namespace Nyon::ECS
         const SegmentShape& GetSegment() const { return std::get<SegmentShape>(shape); }
         
         // === GEOMETRY CALCULATIONS ===
-        void CalculateAABB(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
+        void CalculateAABB(const Math::Vector2& position, float rotation, Math::Vector2& outMin, Math::Vector2& outMax) const
         {
             const float speculativeDistance = 0.1f; // Extra padding for movement
             
@@ -228,15 +271,47 @@ namespace Nyon::ECS
                         return;
                     }
                     
-                    outMin = polygon.vertices[0] + position;
-                    outMax = outMin;
-                    
-                    for (const auto& vertex : polygon.vertices) {
-                        Math::Vector2 worldVertex = vertex + position;
-                        outMin.x = std::min(outMin.x, worldVertex.x);
-                        outMin.y = std::min(outMin.y, worldVertex.y);
-                        outMax.x = std::max(outMax.x, worldVertex.x);
-                        outMax.y = std::max(outMax.y, worldVertex.y);
+                    // Apply rotation to vertices if there's rotation
+                    if (std::abs(rotation) > 1e-6f)
+                    {
+                        float cosTheta = std::cos(rotation);
+                        float sinTheta = std::sin(rotation);
+                        
+                        // Rotate first vertex
+                        Math::Vector2 rotatedVertex = {
+                            polygon.vertices[0].x * cosTheta - polygon.vertices[0].y * sinTheta,
+                            polygon.vertices[0].x * sinTheta + polygon.vertices[0].y * cosTheta
+                        };
+                        outMin = rotatedVertex + position;
+                        outMax = outMin;
+                        
+                        // Rotate and check remaining vertices
+                        for (size_t i = 1; i < polygon.vertices.size(); ++i)
+                        {
+                            rotatedVertex = {
+                                polygon.vertices[i].x * cosTheta - polygon.vertices[i].y * sinTheta,
+                                polygon.vertices[i].x * sinTheta + polygon.vertices[i].y * cosTheta
+                            };
+                            Math::Vector2 worldVertex = rotatedVertex + position;
+                            outMin.x = std::min(outMin.x, worldVertex.x);
+                            outMin.y = std::min(outMin.y, worldVertex.y);
+                            outMax.x = std::max(outMax.x, worldVertex.x);
+                            outMax.y = std::max(outMax.y, worldVertex.y);
+                        }
+                    }
+                    else
+                    {
+                        // No rotation - simple position offset
+                        outMin = polygon.vertices[0] + position;
+                        outMax = outMin;
+                        
+                        for (const auto& vertex : polygon.vertices) {
+                            Math::Vector2 worldVertex = vertex + position;
+                            outMin.x = std::min(outMin.x, worldVertex.x);
+                            outMin.y = std::min(outMin.y, worldVertex.y);
+                            outMax.x = std::max(outMax.x, worldVertex.x);
+                            outMax.y = std::max(outMax.y, worldVertex.y);
+                        }
                     }
                     
                     // Add speculative distance
@@ -342,5 +417,16 @@ namespace Nyon::ECS
         void SetSensor(bool sensor) { isSensor = sensor; }
         void SetFilter(const Filter& newFilter) { filter = newFilter; }
         Filter GetFilter() const { return filter; }
+        
+        // Backwards compatibility methods
+        void GetBounds(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
+        {
+            CalculateAABB(position, 0.0f, outMin, outMax);
+        }
+        
+        void CalculateAABB(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
+        {
+            CalculateAABB(position, 0.0f, outMin, outMax);
+        }
     };
 }

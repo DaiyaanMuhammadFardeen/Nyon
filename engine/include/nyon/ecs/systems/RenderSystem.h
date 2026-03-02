@@ -19,7 +19,9 @@ namespace Nyon::ECS
         void Initialize(EntityManager& entityManager, ComponentStore& componentStore) override
         {
             System::Initialize(entityManager, componentStore);
-            Graphics::Renderer2D::Init();
+            // Renderer2D::Init() is called in Application::Init()
+            // Avoid duplicate initialization
+            m_Alpha = 1.0f; // Default to current state
         }
         
         void Update(float deltaTime) override
@@ -44,8 +46,12 @@ namespace Nyon::ECS
                 
                 if (render.visible)
                 {
+                    // Use interpolated position for smooth rendering
+                    Math::Vector2 interpPosition = transform.GetInterpolatedPosition(m_Alpha);
+                    float interpRotation = transform.GetInterpolatedRotation(m_Alpha);
+                    
                     Graphics::Renderer2D::DrawQuad(
-                        transform.position,
+                        interpPosition,
                         render.size,
                         render.origin,
                         render.color
@@ -56,9 +62,15 @@ namespace Nyon::ECS
             Graphics::Renderer2D::EndScene();
         }
         
+        // Set interpolation alpha value (0.0 = previous state, 1.0 = current state)
+        void SetInterpolationAlpha(float alpha) { m_Alpha = alpha; }
+        
         void Shutdown() override
         {
             Graphics::Renderer2D::Shutdown();
         }
+        
+    private:
+        float m_Alpha = 1.0f; // Interpolation factor between previous and current state
     };
 }

@@ -4,7 +4,7 @@
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/ecs/components/PhysicsBodyComponent.h"
 #include "nyon/ecs/components/ColliderComponent.h"
-#include "nyon/utils/CollisionPhysics.h"
+#include "nyon/ecs/components/BehaviorComponent.h"
 #include <vector>
 
 namespace Nyon::ECS
@@ -102,9 +102,6 @@ namespace Nyon::ECS
                         
                         if (collisionResult.collided)
                         {
-                            // Resolve collision
-                            ResolveCollision(entity, otherEntity, collisionResult, deltaTime);
-                            
                             // Check if this collision contributes to grounded state
                             CheckGroundedContribution(entity, otherEntity, collisionResult);
                             
@@ -117,39 +114,8 @@ namespace Nyon::ECS
             }
         }
         
-        void ResolveCollision(EntityID entityA, EntityID entityB, 
-                            const Utils::CollisionPhysics::CollisionResult& collision,
-                            float deltaTime)
-        {
-            // Get physics bodies
-            auto& bodyA = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityA);
-            auto& bodyB = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityB);
-            
-            // Use existing collision resolution
-            Utils::Physics::Body tempBodyA, tempBodyB;
-            tempBodyA.position = m_ComponentStore->GetComponent<TransformComponent>(entityA).position;
-            tempBodyA.velocity = bodyA.velocity;
-            tempBodyA.mass = bodyA.mass;
-            tempBodyA.isStatic = bodyA.isStatic;
-            
-            tempBodyB.position = m_ComponentStore->GetComponent<TransformComponent>(entityB).position;
-            tempBodyB.velocity = bodyB.velocity;
-            tempBodyB.mass = bodyB.mass;
-            tempBodyB.isStatic = bodyB.isStatic;
-            
-            Utils::CollisionPhysics::ResolveCollision(tempBodyA, tempBodyB, collision);
-            
-            // Update back to ECS components
-            if (!bodyA.isStatic) {
-                bodyA.velocity = tempBodyA.velocity;
-                m_ComponentStore->GetComponent<TransformComponent>(entityA).position = tempBodyA.position;
-            }
-            
-            if (!bodyB.isStatic) {
-                bodyB.velocity = tempBodyB.velocity;
-                m_ComponentStore->GetComponent<TransformComponent>(entityB).position = tempBodyB.position;
-            }
-        }
+        // Collision resolution is handled by dedicated physics systems
+        // This system focuses on grounded state detection and boundary constraints
         
         void CheckGroundedContribution(EntityID entity, EntityID otherEntity,
                                      const Utils::CollisionPhysics::CollisionResult& collision)

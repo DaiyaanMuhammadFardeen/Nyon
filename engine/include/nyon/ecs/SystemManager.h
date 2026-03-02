@@ -36,6 +36,24 @@ namespace Nyon::ECS
         void Update(float deltaTime);
         
         /**
+         * @brief Get a system by type.
+         * @tparam T System type
+         * @return Pointer to the system, or nullptr if not found
+         */
+        template<typename T>
+        T* GetSystem()
+        {
+            for (auto& system : m_Systems)
+            {
+                if (T* typedSystem = dynamic_cast<T*>(system.get()))
+                {
+                    return typedSystem;
+                }
+            }
+            return nullptr;
+        }
+        
+        /**
          * @brief Shutdown all systems.
          */
         void Shutdown();

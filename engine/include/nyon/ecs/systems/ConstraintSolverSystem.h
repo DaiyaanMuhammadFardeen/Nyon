@@ -89,8 +89,7 @@ namespace Nyon::ECS
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
         PhysicsWorldComponent* m_PhysicsWorld;
-        std::vector<PhysicsBodyComponent*> m_BodyComponents;
-        std::vector<uint32_t> m_BodyEntityIds;
+        // Removed m_BodyComponents and m_BodyEntityIds caches to prevent stale pointers - query fresh each Update() call
         
         // Solver data
         std::vector<SolverBody> m_SolverBodies;

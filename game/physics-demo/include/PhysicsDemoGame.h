@@ -9,9 +9,9 @@
 #include "nyon/ecs/components/RenderComponent.h"
 #include "nyon/ecs/systems/CollisionPipelineSystem.h"
 #include "nyon/ecs/systems/ConstraintSolverSystem.h"
-#include "nyon/ecs/systems/TransformPhysicsSyncSystem.h"
+// REMOVED: TransformPhysicsSyncSystem.h - double integration issue fixed
 #include "nyon/ecs/systems/PhysicsIntegrationSystem.h"
-#include "nyon/ecs/systems/ContinuousCollisionSystem.h"
+// REMOVED: ContinuousCollisionSystem.h - using CollisionPipelineSystem instead
 #include "nyon/ecs/systems/DebugRenderSystem.h"
 #include <vector>
 #include <random>

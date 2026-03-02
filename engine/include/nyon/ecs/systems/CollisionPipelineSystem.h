@@ -63,6 +63,7 @@ namespace Nyon::ECS
         void ProcessNarrowPhase();
         void UpdateContacts();
         void DestroyInactiveContacts();
+        void CleanupDestroyedProxies(const std::vector<EntityID>& activeEntities);
         
         // Shape-AABB management
         void UpdateShapeAABB(uint32_t entityId, uint32_t shapeId, 
@@ -72,11 +73,11 @@ namespace Nyon::ECS
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
         PhysicsWorldComponent* m_PhysicsWorld;
-        std::vector<std::tuple<uint32_t, PhysicsBodyComponent*, ColliderComponent*>> m_Colliders;
+        // Removed m_Colliders cache to prevent stale pointers - query fresh each Update() call
         
         // Broad phase structure
         Physics::DynamicTree m_BroadPhaseTree;
-        std::unordered_map<uint32_t, uint32_t> m_ShapeProxyMap; // shapeId -> proxyId
+        std::unordered_map<uint32_t, uint32_t> m_ShapeProxyMap; // entityId -> proxyId (using entityId as unique shape identifier)
         
         // Contact tracking
         std::unordered_map<ContactPair, uint32_t, ContactPairHash> m_ContactMap;

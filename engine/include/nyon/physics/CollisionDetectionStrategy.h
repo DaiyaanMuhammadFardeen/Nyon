@@ -76,11 +76,92 @@ namespace Nyon::Physics
         }
         
         /**
-         * @brief Box2D-style swept sphere collision detection.
+         * @brief Box2D-style swept AABB collision detection.
          * 
-         * Calculates time of impact between two moving spheres.
+         * Calculates time of impact between two moving AABBs using slab method.
+         * This provides consistent geometry between TOI calculation and resolution.
          */
         static float CalculateTimeOfImpact(
+            const Math::Vector2& startPosA, const Math::Vector2& endPosA,
+            const Math::Vector2& startPosB, const Math::Vector2& endPosB,
+            float halfWidthA, float halfHeightA,
+            float halfWidthB, float halfHeightB)
+        {
+            // Calculate relative motion
+            Math::Vector2 relStart = startPosA - startPosB;
+            Math::Vector2 relEnd = endPosA - endPosB;
+            Math::Vector2 relVel = relEnd - relStart;
+            
+            // Combined half-extents
+            float combinedHalfWidth = halfWidthA + halfWidthB;
+            float combinedHalfHeight = halfHeightA + halfHeightB;
+            
+            // Already overlapping
+            if (std::abs(relStart.x) < combinedHalfWidth && 
+                std::abs(relStart.y) < combinedHalfHeight)
+            {
+                return 0.0f;
+            }
+            
+            // Slab method for swept AABB
+            float tEnter = -std::numeric_limits<float>::max();
+            float tExit = std::numeric_limits<float>::max();
+            
+            // Check X-axis
+            if (std::abs(relVel.x) > 1e-6f)
+            {
+                float t1 = (combinedHalfWidth - relStart.x) / relVel.x;
+                float t2 = (-combinedHalfWidth - relStart.x) / relVel.x;
+                
+                if (t1 > t2) std::swap(t1, t2);
+                
+                tEnter = std::max(tEnter, t1);
+                tExit = std::min(tExit, t2);
+            }
+            else
+            {
+                // No motion on X-axis, check overlap
+                if (std::abs(relStart.x) >= combinedHalfWidth)
+                {
+                    return -1.0f; // No intersection
+                }
+            }
+            
+            // Check Y-axis
+            if (std::abs(relVel.y) > 1e-6f)
+            {
+                float t1 = (combinedHalfHeight - relStart.y) / relVel.y;
+                float t2 = (-combinedHalfHeight - relStart.y) / relVel.y;
+                
+                if (t1 > t2) std::swap(t1, t2);
+                
+                tEnter = std::max(tEnter, t1);
+                tExit = std::min(tExit, t2);
+            }
+            else
+            {
+                // No motion on Y-axis, check overlap
+                if (std::abs(relStart.y) >= combinedHalfHeight)
+                {
+                    return -1.0f; // No intersection
+                }
+            }
+            
+            // Valid intersection
+            if (tEnter <= tExit && tEnter >= 0.0f && tEnter <= 1.0f)
+            {
+                return tEnter;
+            }
+            
+            return -1.0f; // No intersection
+        }
+        
+        /**
+         * @brief Legacy sphere-based TOI for backward compatibility.
+         * 
+         * @deprecated Use the AABB-based version for consistency.
+         */
+        static float CalculateSphereTimeOfImpact(
             const Math::Vector2& startPosA, const Math::Vector2& endPosA,
             const Math::Vector2& startPosB, const Math::Vector2& endPosB,
             float radiusA, float radiusB)

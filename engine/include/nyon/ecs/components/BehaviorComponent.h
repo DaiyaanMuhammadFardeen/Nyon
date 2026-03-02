@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <vector>
 #include "nyon/ecs/EntityManager.h"
 
 namespace Nyon::ECS

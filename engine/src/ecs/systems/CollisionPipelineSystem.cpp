@@ -17,21 +17,8 @@ namespace Nyon::ECS
             m_PhysicsWorld = &componentStore.GetComponent<PhysicsWorldComponent>(worldEntities[0]);
         }
         
-        // Get all entities with both physics body and collider components
-        const auto& bodyEntities = componentStore.GetEntitiesWithComponent<PhysicsBodyComponent>();
-        for (auto entityId : bodyEntities)
-        {
-            if (componentStore.HasComponent<ColliderComponent>(entityId))
-            {
-                PhysicsBodyComponent* body = &componentStore.GetComponent<PhysicsBodyComponent>(entityId);
-                ColliderComponent* collider = &componentStore.GetComponent<ColliderComponent>(entityId);
-                
-                if (body && collider && body->ShouldCollide())
-                {
-                    m_Colliders.emplace_back(entityId, body, collider);
-                }
-            }
-        }
+        // No pointer caching - query fresh each Update() call
+        // This prevents dangling pointers when new entities are added
     }
     
     void CollisionPipelineSystem::Update(float deltaTime)
@@ -60,9 +47,24 @@ namespace Nyon::ECS
     
     void CollisionPipelineSystem::UpdateBroadPhase()
     {
+        // Query fresh entities each frame to avoid stale pointers
+        const auto& bodyEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
+        
+        // Clean up proxies for destroyed entities first
+        CleanupDestroyedProxies(bodyEntities);
+        
         // Update all shape AABBs in the broad phase tree
-        for (const auto& [entityId, body, collider] : m_Colliders)
+        for (auto entityId : bodyEntities)
         {
+            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId))
+                continue;
+                
+            const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
+            const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
+            
+            if (!body.ShouldCollide())
+                continue;
+            
             // Get position from TransformComponent
             Math::Vector2 position = {0.0f, 0.0f};
             if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
@@ -72,7 +74,8 @@ namespace Nyon::ECS
             }
             
             // Update shape AABB in broad phase
-            UpdateShapeAABB(entityId, 0, collider, position);
+            // Use entityId as unique identifier since each entity has one shape
+            UpdateShapeAABB(entityId, entityId, const_cast<ColliderComponent*>(&collider), position);
         }
         
         // Handle moved proxies
@@ -90,11 +93,20 @@ namespace Nyon::ECS
     {
         m_ActivePairs.clear();
         
+        // Query fresh entities each frame to avoid stale pointers
+        const auto& bodyEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
+        
         // For each shape, query broad phase for potential collisions
-        for (const auto& [entityIdA, bodyA, colliderA] : m_Colliders)
+        for (auto entityIdA : bodyEntities)
         {
+            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityIdA))
+                continue;
+                
+            const auto& bodyA = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityIdA);
+            const auto& colliderA = m_ComponentStore->GetComponent<ColliderComponent>(entityIdA);
+            
             // Skip static bodies for performance
-            if (bodyA->isStatic && !bodyA->isKinematic)
+            if (bodyA.isStatic && !bodyA.isKinematic)
                 continue;
                 
             // Get current position
@@ -107,14 +119,14 @@ namespace Nyon::ECS
                 
             // Get current AABB
             Math::Vector2 min, max;
-            colliderA->CalculateAABB(positionA, min, max);
+            colliderA.CalculateAABB(positionA, min, max);
             Physics::AABB queryAABB(min, max);
             
             // Query broad phase
             BroadPhaseCallback callback;
             callback.system = this;
             callback.entityId = entityIdA;
-            callback.shapeId = 0;
+            callback.shapeId = entityIdA;
             
             m_BroadPhaseTree.Query(queryAABB, &callback);
         }
@@ -222,6 +234,32 @@ namespace Nyon::ECS
         }
     }
     
+    void CollisionPipelineSystem::CleanupDestroyedProxies(const std::vector<EntityID>& activeEntities)
+    {
+        // Create a set of active entity IDs for fast lookup
+        std::unordered_set<EntityID> activeSet(activeEntities.begin(), activeEntities.end());
+        
+        // Find and remove proxies for destroyed entities
+        auto it = m_ShapeProxyMap.begin();
+        while (it != m_ShapeProxyMap.end())
+        {
+            EntityID entityId = it->first;
+            uint32_t proxyId = it->second;
+            
+            // Check if entity is still active
+            if (activeSet.find(entityId) == activeSet.end())
+            {
+                // Entity has been destroyed - remove its proxy
+                m_BroadPhaseTree.DestroyProxy(proxyId);
+                it = m_ShapeProxyMap.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+    
     void CollisionPipelineSystem::UpdateShapeAABB(uint32_t entityId, uint32_t shapeId,
                                                 ColliderComponent* collider,
                                                 const Math::Vector2& position)
@@ -231,6 +269,7 @@ namespace Nyon::ECS
         collider->CalculateAABB(position, min, max);
         Physics::AABB newAABB(min, max);
         
+        // Use entityId as unique shape identifier to avoid collisions
         auto proxyIt = m_ShapeProxyMap.find(shapeId);
         if (proxyIt != m_ShapeProxyMap.end())
         {
@@ -256,8 +295,25 @@ namespace Nyon::ECS
         if (entityId == otherEntityId)
             return true;
             
+        // Check if both entities have collider components
+        if (!system->m_ComponentStore->HasComponent<ColliderComponent>(entityId) ||
+            !system->m_ComponentStore->HasComponent<ColliderComponent>(otherEntityId))
+        {
+            return true; // Continue querying
+        }
+        
+        // Get collider components for filtering
+        const auto& colliderA = system->m_ComponentStore->GetComponent<ColliderComponent>(entityId);
+        const auto& colliderB = system->m_ComponentStore->GetComponent<ColliderComponent>(otherEntityId);
+        
+        // Apply broad-phase filtering using ColliderComponent::Filter
+        if (!colliderA.filter.ShouldCollide(colliderB.filter))
+        {
+            return true; // Skip this pair due to filtering
+        }
+            
         // Create contact pair
-        ContactPair pair{entityId, otherEntityId, shapeId, 0};
+        ContactPair pair{entityId, otherEntityId, shapeId, otherEntityId};
         system->m_ActivePairs.push_back(pair);
         
         return true; // Continue querying

@@ -87,16 +87,40 @@ namespace Nyon::ECS
             ColliderComponent& colliderA, ColliderComponent& colliderB,
             EntityID entityA, EntityID entityB, float deltaTime);
         
+        /**
+         * @brief Resolves CCD impulse using consistent geometry.
+         * @deprecated Use ResolveCCDCollision instead for unified approach.
+         */
         void ResolveCCDImpulse(
             TransformComponent& transformA, TransformComponent& transformB,
             PhysicsBodyComponent& bodyA, PhysicsBodyComponent& bodyB,
             EntityID entityA, EntityID entityB);
         
+        /**
+         * @brief Applies positional correction for CCD.
+         * @deprecated Use ResolveCCDCollision instead for unified approach.
+         */
         void ResolveCCDPositionalCorrection(
             TransformComponent& transformA, TransformComponent& transformB,
             PhysicsBodyComponent& bodyA, PhysicsBodyComponent& bodyB,
             EntityID entityA, EntityID entityB);
         
+        /**
+         * @brief Unified CCD collision resolution with consistent geometry and standardized normal convention.
+         * 
+         * This method provides a coherent approach to CCD by:
+         * 1. Using swept AABB TOI calculation for consistent timing
+         * 2. Calculating collision normal at exact TOI moment with standardized convention (FROM B TO A)
+         * 3. Applying impulse and positional correction in single pass
+         * 4. Maintaining geometric consistency between detection and resolution
+         * 
+         * Fixes CB-02: Inconsistent geometry between TOI (sphere model) and resolution (AABB model)
+         * Fixes CB-03: Inconsistent normal convention between positional correction and impulse resolution
+         * Fixes CB-04: Unconditional impulse application and incorrect penetration evaluation timing
+         * Fixes CB-05: Velocity clamping in collision resolver destroying physics realism
+         * Fixes CB-06: Inconsistent ground contact detection using wrong normal direction
+         * Fixes CB-07: Dead code elimination - ResolveCCDCollision is now the active collision resolution path
+         */
         void ResolveCCDCollision(
             TransformComponent& transformA, TransformComponent& transformB,
             PhysicsBodyComponent& bodyA, PhysicsBodyComponent& bodyB,

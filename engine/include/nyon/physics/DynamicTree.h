@@ -3,6 +3,7 @@
 #include "nyon/math/Vector2.h"
 #include <vector>
 #include <algorithm>
+#include <limits>
 #include <cstdint>
 
 namespace Nyon::Physics
@@ -145,7 +146,7 @@ namespace Nyon::Physics
         uint32_t child1;           // Left child index
         uint32_t child2;           // Right child index
         uint32_t userData;         // User data (entity/shape ID)
-        float height;              // Node height for balancing
+        int32_t height;            // Node height for balancing (now int32_t)
         bool moved;                // Whether node moved significantly
         
         TreeNode() : parent(NULL_NODE), child1(NULL_NODE), child2(NULL_NODE), 

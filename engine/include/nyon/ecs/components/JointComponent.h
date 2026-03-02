@@ -34,70 +34,62 @@ namespace Nyon::ECS
         std::string name = "joint";     // Joint name for debugging
         
         // === JOINT-SPECIFIC DATA ===
-        union
+        // Separate structs instead of union to avoid undefined behavior with non-trivial members
+        struct DistanceJointData
         {
-            // Distance Joint
-            struct
-            {
-                float length = 1.0f;        // Target distance
-                float frequencyHz = 0.0f;   // Spring frequency (0 = rigid)
-                float dampingRatio = 0.0f;  // Spring damping ratio
-            } distanceJoint;
-            
-            // Revolute Joint
-            struct
-            {
-                bool enableLimit = false;       // Enable rotation limits
-                float lowerAngle = 0.0f;        // Lower rotation limit (radians)
-                float upperAngle = 0.0f;        // Upper rotation limit (radians)
-                bool enableMotor = false;       // Enable motor
-                float motorSpeed = 0.0f;        // Motor speed (radians/sec)
-                float maxMotorTorque = 0.0f;    // Maximum motor torque
-                float referenceAngle = 0.0f;    // Reference angle for limits
-            } revoluteJoint;
-            
-            // Prismatic Joint
-            struct
-            {
-                Math::Vector2 localAxisA = {1.0f, 0.0f}; // Translation axis (body A local)
-                bool enableLimit = false;       // Enable translation limits
-                float lowerTranslation = 0.0f;  // Lower translation limit
-                float upperTranslation = 0.0f;  // Upper translation limit
-                bool enableMotor = false;       // Enable motor
-                float motorSpeed = 0.0f;        // Motor speed
-                float maxMotorForce = 0.0f;     // Maximum motor force
-                float referenceAngle = 0.0f;    // Reference angle
-            } prismaticJoint;
-            
-            // Weld Joint
-            struct
-            {
-                float referenceAngle = 0.0f;    // Reference angle between bodies
-                float frequencyHz = 0.0f;       // Spring frequency
-                float dampingRatio = 0.0f;      // Spring damping ratio
-            } weldJoint;
-            
-            // Wheel Joint
-            struct
-            {
-                Math::Vector2 localAxisA = {0.0f, 1.0f}; // Suspension axis (body A local)
-                bool enableMotor = false;       // Enable motor
-                float motorSpeed = 0.0f;        // Motor speed
-                float maxMotorTorque = 0.0f;    // Maximum motor torque
-                float springFrequencyHz = 2.0f; // Spring frequency
-                float springDampingRatio = 0.7f; // Spring damping ratio
-            } wheelJoint;
-            
-            // Motor Joint
-            struct
-            {
-                Math::Vector2 linearOffset = {0.0f, 0.0f}; // Target linear offset
-                float angularOffset = 0.0f;     // Target angular offset
-                float maxForce = 1000.0f;       // Maximum linear force
-                float maxTorque = 100.0f;       // Maximum angular torque
-                float correctionFactor = 0.3f;  // Position correction factor
-            } motorJoint;
-        };
+            float length = 1.0f;        // Target distance
+            float frequencyHz = 0.0f;   // Spring frequency (0 = rigid)
+            float dampingRatio = 0.0f;  // Spring damping ratio
+        } distanceJoint;
+        
+        struct RevoluteJointData
+        {
+            bool enableLimit = false;       // Enable rotation limits
+            float lowerAngle = 0.0f;        // Lower rotation limit (radians)
+            float upperAngle = 0.0f;        // Upper rotation limit (radians)
+            bool enableMotor = false;       // Enable motor
+            float motorSpeed = 0.0f;        // Motor speed (radians/sec)
+            float maxMotorTorque = 0.0f;    // Maximum motor torque
+            float referenceAngle = 0.0f;    // Reference angle for limits
+        } revoluteJoint;
+        
+        struct PrismaticJointData
+        {
+            Math::Vector2 localAxisA = {1.0f, 0.0f}; // Translation axis (body A local)
+            bool enableLimit = false;       // Enable translation limits
+            float lowerTranslation = 0.0f;  // Lower translation limit
+            float upperTranslation = 0.0f;  // Upper translation limit
+            bool enableMotor = false;       // Enable motor
+            float motorSpeed = 0.0f;        // Motor speed
+            float maxMotorForce = 0.0f;     // Maximum motor force
+            float referenceAngle = 0.0f;    // Reference angle
+        } prismaticJoint;
+        
+        struct WeldJointData
+        {
+            float referenceAngle = 0.0f;    // Reference angle between bodies
+            float frequencyHz = 0.0f;       // Spring frequency
+            float dampingRatio = 0.0f;      // Spring damping ratio
+        } weldJoint;
+        
+        struct WheelJointData
+        {
+            Math::Vector2 localAxisA = {0.0f, 1.0f}; // Suspension axis (body A local)
+            bool enableMotor = false;       // Enable motor
+            float motorSpeed = 0.0f;        // Motor speed
+            float maxMotorTorque = 0.0f;    // Maximum motor torque
+            float springFrequencyHz = 2.0f; // Spring frequency
+            float springDampingRatio = 0.7f; // Spring damping ratio
+        } wheelJoint;
+        
+        struct MotorJointData
+        {
+            Math::Vector2 linearOffset = {0.0f, 0.0f}; // Target linear offset
+            float angularOffset = 0.0f;     // Target angular offset
+            float maxForce = 1000.0f;       // Maximum linear force
+            float maxTorque = 100.0f;       // Maximum angular torque
+            float correctionFactor = 0.3f;  // Position correction factor
+        } motorJoint;
         
         // === RUNTIME DATA ===
         uint32_t jointId = 0;           // Unique joint identifier

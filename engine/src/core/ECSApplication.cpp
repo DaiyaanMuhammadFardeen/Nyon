@@ -2,8 +2,16 @@
 #include "nyon/ecs/systems/InputSystem.h"
 // Removed legacy system includes
 #include "nyon/ecs/systems/RenderSystem.h"
+#include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/utils/InputManager.h"
 #include <iostream>
+
+// Debug logging macro - only output in debug builds
+#ifdef _DEBUG
+#define NYON_DEBUG_LOG(x) std::cerr << x << std::endl
+#else
+#define NYON_DEBUG_LOG(x)
+#endif
 
 namespace Nyon
 {
@@ -13,17 +21,17 @@ namespace Nyon
         , m_SystemManager(m_EntityManager, m_ComponentStore)
         , m_ECSInitialized(false)
     {
-        std::cerr << "[DEBUG] ECSApplication constructor called" << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication constructor called");
     }
     
     ECSApplication::~ECSApplication()
     {
-        std::cerr << "[DEBUG] ECSApplication destructor called" << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication destructor called");
     }
     
     void ECSApplication::OnStart()
     {
-        std::cerr << "[DEBUG] ECSApplication::OnStart() called" << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnStart() called");
         
         // Initialize input manager with the window
         Utils::InputManager::Init(GetWindow());
@@ -37,12 +45,12 @@ namespace Nyon
         // Call game-specific ECS initialization
         OnECSStart();
         
-        std::cerr << "[DEBUG] ECSApplication::OnStart() completed" << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnStart() completed");
     }
     
     void ECSApplication::OnFixedUpdate(float deltaTime)
     {
-        std::cerr << "[DEBUG] ECSApplication::OnFixedUpdate() called with delta time: " << deltaTime << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnFixedUpdate() called with delta time: " << deltaTime);
         
         if (m_ECSInitialized)
         {
@@ -53,13 +61,39 @@ namespace Nyon
             OnECSUpdate(deltaTime);
         }
         
-        std::cerr << "[DEBUG] ECSApplication::OnFixedUpdate() completed" << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnFixedUpdate() completed");
     }
     
     void ECSApplication::OnInterpolateAndRender(float alpha)
     {
+        // Pass interpolation alpha to RenderSystem for smooth rendering
+        ECS::RenderSystem* renderSystem = m_SystemManager.GetSystem<ECS::RenderSystem>();
+        if (renderSystem)
+        {
+            renderSystem->SetInterpolationAlpha(alpha);
+        }
+        
+        // Update render system with interpolation
+        if (m_ECSInitialized)
+        {
+            // Only update render system during interpolation phase
+            renderSystem->Update(0.0f); // Delta time not used in rendering
+        }
+        
         // Rendering is handled by the RenderSystem
         // This method exists for compatibility but delegates to ECS systems
-        std::cerr << "[DEBUG] ECSApplication::OnInterpolateAndRender() called with alpha: " << alpha << std::endl;
+        NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnInterpolateAndRender() called with alpha: " << alpha);
+        
+        // Render debug information if DebugRenderSystem exists
+        ECS::DebugRenderSystem* debugSystem = GetDebugRenderSystem();
+        if (debugSystem)
+        {
+            debugSystem->RenderDebugInfo();
+        }
+    }
+    
+    ECS::DebugRenderSystem* ECSApplication::GetDebugRenderSystem()
+    {
+        return m_SystemManager.GetSystem<ECS::DebugRenderSystem>();
     }
 }

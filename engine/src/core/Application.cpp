@@ -90,11 +90,14 @@ namespace Nyon
 
             m_Accumulator += frameTime;
 
+            // --- INPUT PROCESSING ---
+            // Handle input once per frame, not per physics substep
+            ProcessInput();
+
             // --- PHYSICS UPDATE LOOP ---
             // Consumes time from the accumulator in fixed chunks
             while (m_Accumulator >= FIXED_TIMESTEP)
             {
-                ProcessInput();
                 OnFixedUpdate(static_cast<float>(FIXED_TIMESTEP));
                 
                 // Advance simulation time

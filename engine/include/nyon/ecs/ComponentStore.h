@@ -1,7 +1,6 @@
 #pragma once
 
 #include "EntityManager.h"
-#include <unordered_map>
 #include <vector>
 #include <typeindex>
 #include <memory>
@@ -11,10 +10,10 @@
 namespace Nyon::ECS
 {
     /**
-     * @brief Storage system for ECS components using Structure of Arrays pattern.
+     * @brief Storage system for ECS components using true Structure of Arrays pattern.
      * 
      * Stores components in contiguous arrays for cache-friendly access.
-     * Each component type gets its own storage container.
+     * Each component type gets its own storage container with dense indexing.
      */
     class ComponentStore
     {
@@ -25,31 +24,94 @@ namespace Nyon::ECS
             virtual ~IComponentContainer() = default;
             virtual void RemoveComponent(EntityID entity) = 0;
             virtual bool HasComponent(EntityID entity) const = 0;
+            virtual EntityID GetEntityAtIndex(size_t index) const = 0;
+            virtual size_t GetComponentCount() const = 0;
         };
         
-        // Template container for specific component types
+        // Template container for specific component types using SoA pattern
         template<typename T>
         struct ComponentContainer : public IComponentContainer
         {
-            std::unordered_map<EntityID, T> components;
-            std::vector<EntityID> entityList;
+            std::vector<T> components;           // Dense array of components
+            std::vector<EntityID> entityIds;     // Parallel array of entity IDs
+            std::vector<bool> activeFlags;       // Active flag for each component
             
             void RemoveComponent(EntityID entity) override
             {
-                auto it = components.find(entity);
-                if (it != components.end()) {
-                    components.erase(it);
-                    // Remove from entity list using algorithm functions
-                    auto it2 = std::find(entityList.begin(), entityList.end(), entity);
-                    if (it2 != entityList.end()) {
-                        entityList.erase(it2);
+                // Find entity in our dense arrays
+                for (size_t i = 0; i < entityIds.size(); ++i)
+                {
+                    if (entityIds[i] == entity && activeFlags[i])
+                    {
+                        activeFlags[i] = false;
+                        // Component data remains but is marked inactive
+                        return;
                     }
                 }
             }
             
             bool HasComponent(EntityID entity) const override
             {
-                return components.find(entity) != components.end();
+                for (size_t i = 0; i < entityIds.size(); ++i)
+                {
+                    if (entityIds[i] == entity && activeFlags[i])
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            EntityID GetEntityAtIndex(size_t index) const override
+            {
+                if (index < entityIds.size() && activeFlags[index])
+                {
+                    return entityIds[index];
+                }
+                return INVALID_ENTITY_ID;
+            }
+            
+            size_t GetComponentCount() const override
+            {
+                size_t count = 0;
+                for (bool active : activeFlags)
+                {
+                    if (active) count++;
+                }
+                return count;
+            }
+            
+            // Add component to dense arrays
+            void AddComponent(EntityID entity, T&& component)
+            {
+                // Check if entity already has this component
+                for (size_t i = 0; i < entityIds.size(); ++i)
+                {
+                    if (entityIds[i] == entity && activeFlags[i])
+                    {
+                        // Update existing component
+                        components[i] = std::forward<T>(component);
+                        return;
+                    }
+                }
+                
+                // Add new component
+                components.push_back(std::forward<T>(component));
+                entityIds.push_back(entity);
+                activeFlags.push_back(true);
+            }
+            
+            // Get component reference by index (for iteration)
+            T& GetComponentByIndex(size_t index)
+            {
+                assert(index < components.size() && activeFlags[index]);
+                return components[index];
+            }
+            
+            const T& GetComponentByIndex(size_t index) const
+            {
+                assert(index < components.size() && activeFlags[index]);
+                return components[index];
             }
         };
         
@@ -68,12 +130,7 @@ namespace Nyon::ECS
             assert(m_EntityManager.IsEntityValid(entity));
             
             auto& container = GetOrCreateContainer<T>();
-            container.components[entity] = std::forward<T>(component);
-            
-            // Add to entity list if not already present
-            if (std::find(container.entityList.begin(), container.entityList.end(), entity) == container.entityList.end()) {
-                container.entityList.push_back(entity);
-            }
+            container.AddComponent(entity, std::forward<T>(component));
         }
         
         /**
@@ -101,7 +158,20 @@ namespace Nyon::ECS
         {
             assert(HasComponent<T>(entity));
             auto& container = GetContainer<T>();
-            return container.components.at(entity);
+            
+            // Find the component for this entity
+            for (size_t i = 0; i < container.entityIds.size(); ++i)
+            {
+                if (container.entityIds[i] == entity && container.activeFlags[i])
+                {
+                    return container.components[i];
+                }
+            }
+            
+            // This should never happen due to the assert above
+            assert(false);
+            static T dummy{};
+            return dummy;
         }
         
         /**
@@ -115,7 +185,20 @@ namespace Nyon::ECS
         {
             assert(HasComponent<T>(entity));
             const auto& container = GetContainer<T>();
-            return container.components.at(entity);
+            
+            // Find the component for this entity
+            for (size_t i = 0; i < container.entityIds.size(); ++i)
+            {
+                if (container.entityIds[i] == entity && container.activeFlags[i])
+                {
+                    return container.components[i];
+                }
+            }
+            
+            // This should never happen due to the assert above
+            assert(false);
+            static T dummy{};
+            return dummy;
         }
         
         /**
@@ -140,14 +223,80 @@ namespace Nyon::ECS
          * @return Vector of entity IDs with this component
          */
         template<typename T>
-        const std::vector<EntityID>& GetEntitiesWithComponent() const
+        std::vector<EntityID> GetEntitiesWithComponent() const
+        {
+            std::vector<EntityID> entities;
+            auto containerIt = m_Containers.find(typeid(T));
+            if (containerIt != m_Containers.end()) {
+                const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
+                for (size_t i = 0; i < container.entityIds.size(); ++i)
+                {
+                    if (container.activeFlags[i])
+                    {
+                        entities.push_back(container.entityIds[i]);
+                    }
+                }
+            }
+            return entities;
+        }
+        
+        /**
+         * @brief Iterate over all components of a specific type (cache-friendly).
+         * @tparam T Component type
+         * @tparam Func Function type that takes (EntityID, T&) or (const EntityID, const T&)
+         * @param func Function to call for each component
+         */
+        template<typename T, typename Func>
+        void ForEachComponent(Func&& func)
         {
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
-                return static_cast<const ComponentContainer<T>*>(containerIt->second.get())->entityList;
+                auto& container = *static_cast<ComponentContainer<T>*>(containerIt->second.get());
+                for (size_t i = 0; i < container.components.size(); ++i)
+                {
+                    if (container.activeFlags[i])
+                    {
+                        func(container.entityIds[i], container.components[i]);
+                    }
+                }
             }
-            static std::vector<EntityID> empty;
-            return empty;
+        }
+        
+        /**
+         * @brief Iterate over all components of a specific type (const version).
+         * @tparam T Component type
+         * @tparam Func Function type that takes (EntityID, const T&)
+         * @param func Function to call for each component
+         */
+        template<typename T, typename Func>
+        void ForEachComponent(Func&& func) const
+        {
+            auto containerIt = m_Containers.find(typeid(T));
+            if (containerIt != m_Containers.end()) {
+                const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
+                for (size_t i = 0; i < container.components.size(); ++i)
+                {
+                    if (container.activeFlags[i])
+                    {
+                        func(container.entityIds[i], container.components[i]);
+                    }
+                }
+            }
+        }
+        
+        /**
+         * @brief Get component count for a specific type (fast O(1)).
+         * @tparam T Component type
+         * @return Number of active components of this type
+         */
+        template<typename T>
+        size_t GetComponentCount() const
+        {
+            auto containerIt = m_Containers.find(typeid(T));
+            if (containerIt != m_Containers.end()) {
+                return containerIt->second->GetComponentCount();
+            }
+            return 0;
         }
         
         /**

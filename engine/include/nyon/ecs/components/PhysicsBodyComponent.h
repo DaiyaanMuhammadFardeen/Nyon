@@ -33,12 +33,10 @@ namespace Nyon::ECS
         // === MATERIAL PROPERTIES ===
         float friction = 0.1f;                      // Friction coefficient (0-1)
         float restitution = 0.0f;                   // Restitution/bounciness (0-1)
-        float linearDamping = 0.0f;                 // Linear velocity decay (0-1)
         float angularDamping = 0.0f;                // Angular velocity decay (0-1)
         
         // === MOVEMENT PROPERTIES ===
-        float drag = 0.0f;                          // Air resistance coefficient
-        float maxSpeed = 1000.0f;                   // Maximum speed limit
+        float drag = 0.0f;                          // Air resistance coefficient (physically correct v² model)
         
         // === CONSTRAINTS ===
         float maxLinearSpeed = 1000.0f;             // Maximum linear speed limit
@@ -93,9 +91,10 @@ namespace Nyon::ECS
             else
             {
                 inverseMass = 1.0f / mass;
-                // Default rectangle inertia: I = m * (w² + h²) / 12
-                // Approximate with unit square for now
-                inertia = mass * 0.1667f; // 1/6 approximation
+                // Correct rectangle inertia: I = m * (w² + h²) / 12
+                // This will be updated properly when we have shape information
+                // For now, use a more reasonable approximation based on typical sizes
+                inertia = mass * 0.0833f; // 1/12 approximation for typical rectangles
                 inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
             }
         }

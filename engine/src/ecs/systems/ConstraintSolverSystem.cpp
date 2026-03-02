@@ -16,32 +16,40 @@ namespace Nyon::ECS
             m_PhysicsWorld = &componentStore.GetComponent<PhysicsWorldComponent>(worldEntities[0]);
         }
         
-        // Get all physics body components
-        const auto& bodyEntities = componentStore.GetEntitiesWithComponent<PhysicsBodyComponent>();
-        m_BodyComponents.reserve(bodyEntities.size());
-        m_BodyEntityIds.reserve(bodyEntities.size());
-        
-        for (auto entityId : bodyEntities)
-        {
-            PhysicsBodyComponent* body = &componentStore.GetComponent<PhysicsBodyComponent>(entityId);
-            if (body && body->ShouldCollide())
-            {
-                m_BodyComponents.push_back(body);
-                m_BodyEntityIds.push_back(entityId);
-            }
-        }
+        // No pointer caching - query fresh each Update() call
+        // This prevents dangling pointers when new entities are added
     }
     
     void ConstraintSolverSystem::Update(float deltaTime)
     {
-        if (!m_PhysicsWorld || m_BodyComponents.empty())
+        if (!m_PhysicsWorld)
+            return;
+            
+        // Query fresh entities each frame to avoid stale pointers
+        const auto& bodyEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
+        
+        // Filter active bodies
+        std::vector<const PhysicsBodyComponent*> activeBodies;
+        std::vector<uint32_t> activeEntityIds;
+        
+        for (auto entityId : bodyEntities)
+        {
+            const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
+            if (body.ShouldCollide())
+            {
+                activeBodies.push_back(&body);
+                activeEntityIds.push_back(entityId);
+            }
+        }
+        
+        if (activeBodies.empty())
             return;
             
         // Prepare solver bodies
-        m_SolverBodies.resize(m_BodyComponents.size());
-        for (size_t i = 0; i < m_BodyComponents.size(); ++i)
+        m_SolverBodies.resize(activeBodies.size());
+        for (size_t i = 0; i < activeBodies.size(); ++i)
         {
-            auto* body = m_BodyComponents[i];
+            const auto* body = activeBodies[i];
             auto& solverBody = m_SolverBodies[i];
             
             solverBody.position = {0.0f, 0.0f}; // Get from TransformComponent
@@ -76,40 +84,50 @@ namespace Nyon::ECS
         SolvePositionConstraints();
         
         // Store results back to components
-        for (size_t i = 0; i < m_BodyComponents.size(); ++i)
+        for (size_t i = 0; i < activeBodies.size(); ++i)
         {
-            auto* body = m_BodyComponents[i];
+            auto entityId = activeEntityIds[i];
+            auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
             const auto& solverBody = m_SolverBodies[i];
             
-            body->velocity = solverBody.velocity;
-            body->angularVelocity = solverBody.angularVelocity;
+            body.velocity = solverBody.velocity;
+            body.angularVelocity = solverBody.angularVelocity;
             
             // Apply damping
-            body->velocity = body->velocity * (1.0f - body->linearDamping * deltaTime);
-            body->angularVelocity = body->angularVelocity * (1.0f - body->angularDamping * deltaTime);
+            body.velocity = body.velocity * (1.0f - body.linearDamping * deltaTime);
+            body.angularVelocity = body.angularVelocity * (1.0f - body.angularDamping * deltaTime);
             
             // Clamp speeds
-            float linearSpeedSq = body->velocity.x * body->velocity.x + body->velocity.y * body->velocity.y;
-            if (linearSpeedSq > body->maxLinearSpeed * body->maxLinearSpeed)
+            float linearSpeedSq = body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y;
+            if (linearSpeedSq > body.maxLinearSpeed * body.maxLinearSpeed)
             {
-                float scale = body->maxLinearSpeed / sqrt(linearSpeedSq);
-                body->velocity = body->velocity * scale;
+                float scale = body.maxLinearSpeed / sqrt(linearSpeedSq);
+                body.velocity = body.velocity * scale;
             }
             
-            if (std::abs(body->angularVelocity) > body->maxAngularSpeed)
+            if (std::abs(body.angularVelocity) > body.maxAngularSpeed)
             {
-                body->angularVelocity = (body->angularVelocity > 0) ? 
-                    body->maxAngularSpeed : -body->maxAngularSpeed;
+                body.angularVelocity = (body.angularVelocity > 0) ? 
+                    body.maxAngularSpeed : -body.maxAngularSpeed;
             }
         }
     }
     
     void ConstraintSolverSystem::InitializeConstraints()
     {
-        // Placeholder for contact constraint initialization
-        // This will be implemented when we have the collision detection system
+        // Clear existing constraints
         m_VelocityConstraints.clear();
         m_PositionConstraints.clear();
+        
+        // For now, leave constraint lists empty as placeholder
+        // In a complete implementation, this would:
+        // 1. Query active contacts from collision detection
+        // 2. Create velocity and position constraints for each contact
+        // 3. Initialize constraint parameters (mass, bias, etc.)
+        
+        // TODO: Implement proper contact constraint initialization
+        // This requires access to contact manifolds and contact points
+        // from the collision detection system
     }
     
     void ConstraintSolverSystem::WarmStart()
@@ -148,10 +166,8 @@ namespace Nyon::ECS
         {
             if (body.isStatic) continue;
             
-            // Apply gravity
-            body.velocity = body.velocity + m_PhysicsWorld->gravity * dt;
-            
-            // Apply damping
+            // Gravity is already applied in PhysicsIntegrationSystem
+            // Only apply damping for stability
             body.velocity = body.velocity * 0.999f; // Small damping for stability
         }
     }

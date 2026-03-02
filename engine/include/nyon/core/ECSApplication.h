@@ -4,6 +4,11 @@
 #include "nyon/ecs/EntityManager.h"
 #include "nyon/ecs/ComponentStore.h"
 #include "nyon/ecs/SystemManager.h"
+
+// Forward declarations
+namespace Nyon::ECS {
+    class DebugRenderSystem;
+}
 #include <memory>
 
 namespace Nyon
@@ -24,6 +29,9 @@ namespace Nyon
         ECS::EntityManager& GetEntityManager() { return m_EntityManager; }
         ECS::ComponentStore& GetComponentStore() { return m_ComponentStore; }
         ECS::SystemManager& GetSystemManager() { return m_SystemManager; }
+        
+        // Get DebugRenderSystem if it exists
+        ECS::DebugRenderSystem* GetDebugRenderSystem();
         
     protected:
         

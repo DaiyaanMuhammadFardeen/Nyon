@@ -39,6 +39,9 @@ namespace Nyon::ECS
     
     void TransformPhysicsSyncSystem::Update(float deltaTime)
     {
+        // Store current deltaTime for velocity calculations
+        m_DeltaTime = deltaTime;
+        
         for (auto& entity : m_SyncEntities)
         {
             switch (m_SyncMode)
@@ -89,13 +92,15 @@ namespace Nyon::ECS
     void TransformPhysicsSyncSystem::SyncTransformToPhysics(SyncEntity& entity)
     {
         // Update physics body position from transform
+        // Use proper deltaTime instead of interpolation factor for velocity calculation
+        // This fixes teleportation issues where position delta was treated as velocity directly
         entity.physicsBody->velocity = (entity.transform->position - entity.lastPosition) / 
-            (m_InterpolationFactor > 0.0f ? m_InterpolationFactor : 1.0f);
+            (m_DeltaTime > 0.0f ? m_DeltaTime : 1.0f);
             
         // Update physics body rotation from transform
         float rotationDelta = entity.transform->rotation - entity.lastRotation;
         entity.physicsBody->angularVelocity = rotationDelta / 
-            (m_InterpolationFactor > 0.0f ? m_InterpolationFactor : 1.0f);
+            (m_DeltaTime > 0.0f ? m_DeltaTime : 1.0f);
             
         // Wake up sleeping bodies when transformed externally
         if (entity.physicsBody->isAwake == false)

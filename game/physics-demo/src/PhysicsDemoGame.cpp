@@ -17,18 +17,24 @@ namespace Game
         
         // Parent initialization is handled automatically
         
-        // Register physics systems
+        // First create physics world component BEFORE adding systems
+        // This ensures CollisionPipelineSystem and ConstraintSolverSystem can access it during Initialize()
+        std::cout << "[DEBUG] Creating physics world component first\n";
+        auto& entityManager = GetEntityManager();
+        auto& componentStore = GetComponentStore();
+        auto worldEntity = entityManager.CreateEntity();
+        componentStore.AddComponent<Nyon::ECS::PhysicsWorldComponent>(worldEntity, Nyon::ECS::PhysicsWorldComponent());
+        
+        // Register physics systems in correct physical order:
+        // 1. PhysicsIntegrationSystem (apply forces, integrate velocities, boundary enforcement)
+        // 2. CollisionPipelineSystem (broad + narrow phase, generate manifolds)  
+        // 3. ConstraintSolverSystem (solve velocity/position constraints)
+        // 4. DebugRenderSystem (overlay debug info)
         std::cout << "[DEBUG] Getting system manager\n";
         auto& systemManager = GetSystemManager();
         
         std::cout << "[DEBUG] Adding PhysicsIntegrationSystem\n";
         systemManager.AddSystem(std::make_unique<Nyon::ECS::PhysicsIntegrationSystem>());
-        
-        std::cout << "[DEBUG] Adding ContinuousCollisionSystem\n";
-        systemManager.AddSystem(std::make_unique<Nyon::ECS::ContinuousCollisionSystem>());
-        
-        std::cout << "[DEBUG] Adding TransformPhysicsSyncSystem\n";
-        systemManager.AddSystem(std::make_unique<Nyon::ECS::TransformPhysicsSyncSystem>());
         
         std::cout << "[DEBUG] Adding CollisionPipelineSystem\n";
         systemManager.AddSystem(std::make_unique<Nyon::ECS::CollisionPipelineSystem>());
@@ -36,17 +42,17 @@ namespace Game
         std::cout << "[DEBUG] Adding ConstraintSolverSystem\n";
         systemManager.AddSystem(std::make_unique<Nyon::ECS::ConstraintSolverSystem>());
         
+        // REMOVED: ContinuousCollisionSystem to avoid conflict with CollisionPipelineSystem
+        // ContinuousCollisionSystem was causing double collision resolution and conflicting corrections
+        
+        // REMOVED: TransformPhysicsSyncSystem to prevent double position integration
+        // TransformPhysicsSyncSystem was causing double integration - position is already 
+        // integrated by PhysicsIntegrationSystem with proper deltaTime scaling
+        
         std::cout << "[DEBUG] Adding DebugRenderSystem\n";
         systemManager.AddSystem(std::make_unique<Nyon::ECS::DebugRenderSystem>());
         
         std::cout << "[DEBUG] All systems added successfully\n";
-        
-        // First create physics world component
-        std::cout << "[DEBUG] Creating physics world component\n";
-        auto& entityManager = GetEntityManager();
-        auto& componentStore = GetComponentStore();
-        auto worldEntity = entityManager.CreateEntity();
-        componentStore.AddComponent<Nyon::ECS::PhysicsWorldComponent>(worldEntity, Nyon::ECS::PhysicsWorldComponent());
         
         // Create game scene
         std::cout << "[DEBUG] Creating environment\n";
@@ -206,7 +212,8 @@ namespace Game
         // Create some obstacles and ramps
         auto rampId = CreateBox({1000, 550}, {150, 20}, 0.0f, true);
         auto& rampTransform = GetComponentStore().GetComponent<Nyon::ECS::TransformComponent>(rampId);
-        rampTransform.rotation = 25.0f;
+        // Convert 25 degrees to radians: 25 * π/180 ≈ 0.436 radians
+        rampTransform.rotation = 25.0f * 3.14159f / 180.0f;
         auto& rampCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(rampId);
         rampCollider.color = {0.7f, 0.5f, 0.3f}; // Brown ramp
         auto& rampRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(rampId);
@@ -336,7 +343,9 @@ namespace Game
         // Configure physics body
         auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
         body.isStatic = isStatic;
-        body.mass = density * size.x * size.y * 0.001f; // Simple mass calculation
+        // Proper mass calculation: mass = density × area
+        // For a rectangle: area = width × height
+        body.mass = density * size.x * size.y;
         body.UpdateMassProperties();
         
         // Configure collider
@@ -384,7 +393,8 @@ namespace Game
         
         auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
         body.isStatic = isStatic;
-        body.mass = density * 3.14159f * radius * radius * 0.001f;
+        // Proper mass calculation: mass = density × π × r²
+        body.mass = density * 3.14159f * radius * radius;
         body.UpdateMassProperties();
         
         auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
@@ -418,7 +428,9 @@ namespace Game
         
         auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
         body.isStatic = isStatic;
-        body.mass = density * 3.14159f * radius * radius * height * 0.001f;
+        // Proper mass calculation: mass = density × (π × r² + 2 × r × h)
+        // Capsule area = circle area + rectangle area
+        body.mass = density * (3.14159f * radius * radius + 2.0f * radius * height);
         body.UpdateMassProperties();
         
         auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);

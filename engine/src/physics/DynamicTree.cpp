@@ -483,9 +483,23 @@ namespace Nyon::Physics
         proxies.reserve(m_proxyCount);
         
         // Collect all proxies
+        // Check if node is allocated (not in free list) by checking parent against free list
         for (uint32_t i = 0; i < m_nodes.size(); ++i)
         {
-            if (m_nodes[i].height >= 0 && m_nodes[i].IsLeaf())
+            // Skip free nodes - they're part of the free list
+            bool isFreeNode = false;
+            uint32_t freeIndex = m_freeList;
+            while (freeIndex != TreeNode::NULL_NODE)
+            {
+                if (freeIndex == i)
+                {
+                    isFreeNode = true;
+                    break;
+                }
+                freeIndex = m_nodes[freeIndex].parent;
+            }
+            
+            if (!isFreeNode && m_nodes[i].IsLeaf())
             {
                 proxies.push_back(i);
             }

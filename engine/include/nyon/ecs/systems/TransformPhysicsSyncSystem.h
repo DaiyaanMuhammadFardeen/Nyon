@@ -62,6 +62,7 @@ namespace Nyon::ECS
         SyncMode m_SyncMode = SyncMode::PhysicsToTransform;
         bool m_EnableInterpolation = true;     // Enable transform interpolation
         float m_InterpolationFactor = 1.0f;    // Interpolation blend factor
+        float m_DeltaTime = 0.016f;            // Last frame's deltaTime for velocity calculations
         
         // Change detection thresholds
         static constexpr float POSITION_CHANGE_THRESHOLD = 0.1f;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+#include <unordered_set>
 
 namespace Nyon::Utils
 {
@@ -27,5 +28,14 @@ namespace Nyon::Utils
         static bool s_PreviousKeys[GLFW_KEY_LAST];
         static bool s_CurrentMouseButtons[GLFW_MOUSE_BUTTON_LAST];
         static bool s_PreviousMouseButtons[GLFW_MOUSE_BUTTON_LAST];
+        
+        // Callback-based input tracking
+        static std::unordered_set<int> s_ActiveKeys;
+        static std::unordered_set<int> s_ActiveMouseButtons;
+        static bool s_InputDirty;
+        
+        // GLFW callback handlers
+        static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+        static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
     };
 }

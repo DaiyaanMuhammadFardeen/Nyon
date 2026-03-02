@@ -24,6 +24,9 @@ namespace Nyon::ECS
         void Update(float deltaTime) override;
         void Initialize(EntityManager& entityManager, ComponentStore& componentStore) override;
         
+        // Render debug information (called from render thread, not physics thread)
+        void RenderDebugInfo();
+        
         // Debug drawing configuration
         void SetFlags(bool drawShapes, bool drawJoints, bool drawAABBs, 
                      bool drawContacts, bool drawCOM);
@@ -40,6 +43,16 @@ namespace Nyon::ECS
             void DrawSolidPolygon(const std::vector<Math::Vector2>& vertices, 
                                 const Math::Vector3& color);
             void DrawPoint(const Math::Vector2& point, float size, 
+                          const Math::Vector3& color);
+            
+            // Queue-based drawing methods for deferred rendering
+            void QueueLine(const Math::Vector2& p1, const Math::Vector2& p2, 
+                          const Math::Vector3& color);
+            void QueueCircle(const Math::Vector2& center, float radius, 
+                           const Math::Vector3& color);
+            void QueuePolygon(const std::vector<Math::Vector2>& vertices, 
+                            const Math::Vector3& color);
+            void QueuePoint(const Math::Vector2& point, float size, 
                           const Math::Vector3& color);
             
         private:
@@ -67,12 +80,32 @@ namespace Nyon::ECS
                             const ColliderComponent::CapsuleShape& capsule,
                             const Math::Vector3& color);
         
+        // Queue-based drawing helpers
+        void QueueLine(const Math::Vector2& p1, const Math::Vector2& p2, const Math::Vector3& color);
+        void QueueCircle(const Math::Vector2& center, float radius, const Math::Vector3& color);
+        void QueuePolygon(const std::vector<Math::Vector2>& vertices, const Math::Vector3& color);
+        void QueuePoint(const Math::Vector2& point, float size, const Math::Vector3& color);
+        
         // Component references
+        ComponentStore* m_ComponentStore = nullptr;
         PhysicsWorldComponent* m_PhysicsWorld;
-        std::vector<std::tuple<uint32_t, PhysicsBodyComponent*, ColliderComponent*>> m_Entities;
+        // Removed m_Entities cache to prevent stale pointers - query fresh each Update() call
         
         // Debug renderer implementation
         NyonDebugRenderer m_Renderer;
+        
+        // Buffer to store debug draw commands for deferred rendering
+        struct DebugDrawCommand {
+            enum Type { LINE, CIRCLE, POLYGON, POINT } type;
+            Math::Vector2 p1, p2;  // For lines and points
+            Math::Vector2 center;  // For circles
+            float radius;          // For circles
+            std::vector<Math::Vector2> vertices;  // For polygons
+            Math::Vector3 color;
+            float size;            // For points
+        };
+        
+        std::vector<DebugDrawCommand> m_DebugCommands;
         
         // Drawing flags
         bool m_DrawShapes = true;
@@ -81,5 +114,8 @@ namespace Nyon::ECS
         bool m_DrawContacts = false;
         bool m_DrawCOM = false;
         bool m_DrawIslands = false;
+        
+        // Flag to control when debug rendering should occur
+        bool m_ShouldRender = false;
     };
 }
