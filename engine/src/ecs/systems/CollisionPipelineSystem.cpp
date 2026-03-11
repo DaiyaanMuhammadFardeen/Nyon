@@ -2,6 +2,7 @@
 #include "nyon/ecs/EntityManager.h"
 #include "nyon/ecs/ComponentStore.h"
 #include "nyon/ecs/components/TransformComponent.h"
+#include "nyon/physics/ManifoldGenerator.h"
 
 namespace Nyon::ECS
 {
@@ -32,6 +33,9 @@ namespace Nyon::ECS
         // Process fixed steps
         while (m_Accumulator >= m_PhysicsWorld->timeStep)
         {
+            // Clear narrow-phase manifolds for this sub-step so they can be rebuilt.
+            m_PhysicsWorld->contactManifolds.clear();
+            
             // Update broad phase
             UpdateBroadPhase();
             
@@ -134,7 +138,7 @@ namespace Nyon::ECS
     
     void CollisionPipelineSystem::UpdateContacts()
     {
-        // Process active contact pairs: detect overlap and resolve it immediately.
+        // Process active contact pairs: generate manifolds and manage contact events/grounding.
         for (const auto& pair : m_ActivePairs)
         {
             // Require all necessary components
@@ -160,86 +164,34 @@ namespace Nyon::ECS
             if (!bodyA.ShouldCollide() && !bodyB.ShouldCollide())
                 continue;
             
-            // Simple AABB intersection test
-            Math::Vector2 minA, maxA, minB, maxB;
-            colliderA.CalculateAABB(transformA.position, minA, maxA);
-            colliderB.CalculateAABB(transformB.position, minB, maxB);
-            
-            if (!(minA.x < maxB.x && maxA.x > minB.x && 
-                  minA.y < maxB.y && maxA.y > minB.y))
+            // --- Narrow phase manifold generation (SAT-based where applicable) ---
+            Math::Vector2 contactNormal{0.0f, 0.0f};
             {
-                continue;
-            }
-            
-            // Compute overlap and normal using minimum-penetration axis
-            Math::Vector2 centerA = (minA + maxA) * 0.5f;
-            Math::Vector2 centerB = (minB + maxB) * 0.5f;
-            Math::Vector2 delta = centerB - centerA;
-            
-            Math::Vector2 halfSizeA = (maxA - minA) * 0.5f;
-            Math::Vector2 halfSizeB = (maxB - minB) * 0.5f;
-            
-            float overlapX = (halfSizeA.x + halfSizeB.x) - std::abs(delta.x);
-            float overlapY = (halfSizeA.y + halfSizeB.y) - std::abs(delta.y);
-            
-            if (overlapX <= 0.0f || overlapY <= 0.0f)
-                continue;
-            
-            Math::Vector2 normal;
-            float penetration;
-            if (overlapX < overlapY)
-            {
-                normal = (delta.x > 0.0f) ? Math::Vector2{1.0f, 0.0f} : Math::Vector2{-1.0f, 0.0f};
-                penetration = overlapX;
-            }
-            else
-            {
-                normal = (delta.y > 0.0f) ? Math::Vector2{0.0f, 1.0f} : Math::Vector2{0.0f, -1.0f};
-                penetration = overlapY;
-            }
-            
-            // Positional correction using inverse masses
-            float invMassA = bodyA.inverseMass;
-            float invMassB = bodyB.inverseMass;
-            float totalInvMass = invMassA + invMassB;
-            if (totalInvMass > 0.0f)
-            {
-                const float baumgarte = 0.6f;
-                Math::Vector2 correction = normal * (penetration * baumgarte / totalInvMass);
+                ECS::ContactManifold manifold = Physics::ManifoldGenerator::GenerateManifold(
+                    pair.entityIdA,
+                    pair.entityIdB,
+                    pair.shapeIdA,
+                    pair.shapeIdB,
+                    colliderA,
+                    colliderB,
+                    transformA,
+                    transformB);
                 
-                if (!bodyA.isStatic)
+                if (manifold.touching)
                 {
-                    transformA.position = transformA.position - correction * invMassA;
-                }
-                if (!bodyB.isStatic)
-                {
-                    transformB.position = transformB.position + correction * invMassB;
-                }
-            }
-            
-            // Velocity resolution (impulse-based)
-            Math::Vector2 relativeVel = bodyB.velocity - bodyA.velocity;
-            float velAlongNormal = Math::Vector2::Dot(relativeVel, normal);
-            
-            // If velocities are separating, skip impulse but keep positional fix
-            if (velAlongNormal < 0.0f)
-            {
-                float restitution = std::sqrt(bodyA.restitution * bodyB.restitution);
-                float j = -(1.0f + restitution) * velAlongNormal;
-                float massTerm = invMassA + invMassB;
-                if (massTerm > 0.0f)
-                {
-                    j /= massTerm;
-                    Math::Vector2 impulse = normal * j;
+                    // Fill combined material properties now so the solver can consume them.
+                    float friction = std::sqrt(bodyA.friction * bodyB.friction);
+                    float restitution = std::sqrt(bodyA.restitution * bodyB.restitution);
+                    manifold.friction = friction;
+                    manifold.restitution = restitution;
                     
-                    if (!bodyA.isStatic)
-                    {
-                        bodyA.velocity = bodyA.velocity - impulse * invMassA;
-                    }
-                    if (!bodyB.isStatic)
-                    {
-                        bodyB.velocity = bodyB.velocity + impulse * invMassB;
-                    }
+                    contactNormal = manifold.normal;
+                    m_PhysicsWorld->contactManifolds.push_back(manifold);
+                }
+                else
+                {
+                    // No contact manifold => no contact/grounding this frame.
+                    continue;
                 }
             }
             
@@ -254,8 +206,8 @@ namespace Nyon::ECS
                 }
             };
             
-            markGroundedIfApplicable(bodyA, bodyB, normal);
-            markGroundedIfApplicable(bodyB, bodyA, -normal);
+            markGroundedIfApplicable(bodyA, bodyB, contactNormal);
+            markGroundedIfApplicable(bodyB, bodyA, -contactNormal);
             
             // Manage contact callbacks
             ContactPair contactKey{pair.entityIdA, pair.entityIdB, pair.shapeIdA, pair.shapeIdB};

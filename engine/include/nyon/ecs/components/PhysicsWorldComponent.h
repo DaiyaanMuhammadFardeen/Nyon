@@ -9,6 +9,45 @@
 namespace Nyon::ECS
 {
     /**
+     * @brief Contact point data structure for collision information.
+     * 
+     * Stores detailed information about contact points between bodies.
+     */
+    struct ContactPoint
+    {
+        Math::Vector2 position;                     // World position of contact point
+        Math::Vector2 normal;                       // Contact normal (points from A to B)
+        float separation;                           // Separation distance (negative = penetration)
+        float normalImpulse;                        // Normal impulse applied
+        float tangentImpulse;                       // Tangent impulse applied
+        float normalMass;                           // Normal constraint mass
+        float tangentMass;                          // Tangent constraint mass
+        uint32_t featureId;                         // Feature identifier for persistence
+        bool persisted;                             // Whether this point persisted from previous step
+    };
+    
+    /**
+     * @brief Contact manifold representing collision between two shapes.
+     * 
+     * Contains all contact points and geometric information for a collision.
+     */
+    struct ContactManifold
+    {
+        std::vector<ContactPoint> points;           // Contact points (0-2 typically)
+        Math::Vector2 normal;                       // Contact normal
+        Math::Vector2 localNormal;                  // Normal in local coordinates
+        Math::Vector2 localPoint;                   // Reference point in local coordinates
+        float friction;                             // Combined friction coefficient
+        float restitution;                          // Combined restitution coefficient
+        float tangentSpeed;                         // Tangent speed for friction
+        uint32_t entityIdA;                         // First entity ID
+        uint32_t entityIdB;                         // Second entity ID
+        uint32_t shapeIdA;                          // First shape ID
+        uint32_t shapeIdB;                          // Second shape ID
+        bool touching;                              // Whether shapes are touching
+    };
+    
+    /**
      * @brief Core physics world component inspired by Box2D's b2World.
      * 
      * Manages all physics simulation aspects including time stepping,
@@ -63,6 +102,10 @@ namespace Nyon::ECS
         bool drawAABBs = false;                     // Visualize bounding boxes
         bool drawContacts = false;                  // Visualize contact points
         bool drawIslands = false;                   // Visualize islands
+        
+        // === NARROW-PHASE CONTACT MANIFOLDS ===
+        // Populated by the collision pipeline each physics step and consumed by the constraint solver.
+        std::vector<ContactManifold> contactManifolds;
         
         // === EVENT CALLBACKS ===
         struct Callbacks
@@ -162,45 +205,6 @@ namespace Nyon::ECS
         { 
             callbacks.sensorEnd = callback; 
         }
-    };
-    
-    /**
-     * @brief Contact point data structure for collision information.
-     * 
-     * Stores detailed information about contact points between bodies.
-     */
-    struct ContactPoint
-    {
-        Math::Vector2 position;                     // World position of contact point
-        Math::Vector2 normal;                       // Contact normal (points from A to B)
-        float separation;                           // Separation distance (negative = penetration)
-        float normalImpulse;                        // Normal impulse applied
-        float tangentImpulse;                       // Tangent impulse applied
-        float normalMass;                           // Normal constraint mass
-        float tangentMass;                          // Tangent constraint mass
-        uint32_t featureId;                         // Feature identifier for persistence
-        bool persisted;                             // Whether this point persisted from previous step
-    };
-    
-    /**
-     * @brief Contact manifold representing collision between two shapes.
-     * 
-     * Contains all contact points and geometric information for a collision.
-     */
-    struct ContactManifold
-    {
-        std::vector<ContactPoint> points;           // Contact points (0-2 typically)
-        Math::Vector2 normal;                       // Contact normal
-        Math::Vector2 localNormal;                  // Normal in local coordinates
-        Math::Vector2 localPoint;                   // Reference point in local coordinates
-        float friction;                             // Combined friction coefficient
-        float restitution;                          // Combined restitution coefficient
-        float tangentSpeed;                         // Tangent speed for friction
-        uint32_t entityIdA;                         // First entity ID
-        uint32_t entityIdB;                         // Second entity ID
-        uint32_t shapeIdA;                          // First shape ID
-        uint32_t shapeIdB;                          // Second shape ID
-        bool touching;                              // Whether shapes are touching
     };
     
     /**

@@ -57,7 +57,7 @@ namespace Nyon::ECS
             uint32_t indexA;                            // Body A index
             uint32_t indexB;                            // Body B index
             float invMassA, invMassB;                   // Inverse masses
-            float localCenterA, localCenterB;           // Local centers of mass
+            Math::Vector2 localCenterA, localCenterB;   // Local centers of mass
             float invIA, invIB;                         // Inverse inertias
             int pointCount;                             // Number of contact points
         };
@@ -73,6 +73,8 @@ namespace Nyon::ECS
             float invInertia;                           // Inverse inertia
             Math::Vector2 localCenter;                  // Local center of mass
             bool isStatic;                              // Whether body is static
+            bool isKinematic;                           // Whether body is kinematic
+            uint32_t entityId;                          // Owning entity ID (for manifold lookups)
         };
         
         // Internal solver methods

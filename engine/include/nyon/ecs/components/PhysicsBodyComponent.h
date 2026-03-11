@@ -79,9 +79,12 @@ namespace Nyon::ECS
             UpdateMassProperties();
         }
         
+        // For now this only handles body type flags and scalar mass.
+        // Shape-specific inertia is supplied when the collider is initialized.
         void UpdateMassProperties()
         {
-            if (isStatic || mass <= 0.0f)
+            // Static and kinematic bodies have infinite mass in the solver
+            if (isStatic || isKinematic || mass <= 0.0f)
             {
                 mass = 0.0f;
                 inverseMass = 0.0f;
@@ -91,11 +94,17 @@ namespace Nyon::ECS
             else
             {
                 inverseMass = 1.0f / mass;
-                // Correct rectangle inertia: I = m * (w² + h²) / 12
-                // This will be updated properly when we have shape information
-                // For now, use a more reasonable approximation based on typical sizes
-                inertia = mass * 0.0833f; // 1/12 approximation for typical rectangles
-                inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
+                // inertia is expected to be set from shape info; keep any existing value
+                if (inertia > 0.0f)
+                {
+                    inverseInertia = 1.0f / inertia;
+                }
+                else
+                {
+                    // Fallback: treat as point mass (no rotation)
+                    inertia = 0.0f;
+                    inverseInertia = 0.0f;
+                }
             }
         }
         
@@ -183,6 +192,8 @@ namespace Nyon::ECS
         }
         
         // === UTILITY METHODS ===
+        bool IsStatic() const { return isStatic; }
+        bool IsKinematic() const { return isKinematic; }
         bool IsDynamic() const { return !isStatic && !isKinematic; }
         bool ShouldCollide() const { return isAwake || isKinematic; }
         float GetMass() const { return mass; }

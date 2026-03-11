@@ -4,6 +4,8 @@
 #include "nyon/ecs/components/PhysicsBodyComponent.h"
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/ecs/components/PhysicsWorldComponent.h"
+#include <fstream>
+#include <chrono>
 
 namespace Nyon::ECS
 {
@@ -41,9 +43,12 @@ namespace Nyon::ECS
             // Get all physics bodies
             const auto& physicsEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
             
-            // Prepare transform components for interpolation by storing previous state
+            // Reset grounded state for this step and prepare transforms for interpolation
             for (EntityID entity : physicsEntities)
             {
+                auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entity);
+                body.UpdateGroundedState(false);
+                
                 if (m_ComponentStore->HasComponent<TransformComponent>(entity))
                 {
                     auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entity);
@@ -126,6 +131,7 @@ namespace Nyon::ECS
             }
             
             // Update linear velocity: v = v0 + a * dt
+            Math::Vector2 oldVelocity = body.velocity;
             body.velocity = body.velocity + acceleration * deltaTime;
             
             // Clamp to maximum linear speed
@@ -157,6 +163,38 @@ namespace Nyon::ECS
             
             // Update sleep state based on velocity
             UpdateSleepState(body, deltaTime);
+
+            // #region agent log
+            try
+            {
+                using namespace std::chrono;
+                auto now = time_point_cast<milliseconds>(system_clock::now());
+                long long ts = now.time_since_epoch().count();
+                std::ofstream out("/home/daiyaan2002/Desktop/Projects/Nyon/.cursor/debug-b63f20.log", std::ios::app);
+                if (out.is_open())
+                {
+                    out << "{\"sessionId\":\"b63f20\","
+                        << "\"id\":\"log_integrate_velocity_" << ts << "\","
+                        << "\"timestamp\":" << ts << ","
+                        << "\"location\":\"PhysicsIntegrationSystem.h:IntegrateVelocity\","
+                        << "\"message\":\"integrate velocity\","
+                        << "\"runId\":\"initial\","
+                        << "\"hypothesisId\":\"H4\","
+                        << "\"data\":{"
+                            << "\"oldVelX\":" << oldVelocity.x << ","
+                            << "\"oldVelY\":" << oldVelocity.y << ","
+                            << "\"newVelX\":" << body.velocity.x << ","
+                            << "\"newVelY\":" << body.velocity.y << ","
+                            << "\"invMass\":" << body.inverseMass
+                        << "}"
+                        << "}"
+                        << std::endl;
+                }
+            }
+            catch (...)
+            {
+            }
+            // #endregion
         }
         
         /**

@@ -1,6 +1,7 @@
 #include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/ecs/EntityManager.h"
 #include "nyon/ecs/ComponentStore.h"
+#include "nyon/ecs/components/TransformComponent.h"
 #include <cfloat>
 #include <iostream>
 
@@ -155,29 +156,12 @@ namespace Nyon::ECS
                     Graphics::Renderer2D::DrawLine(cmd.p1, cmd.p2, cmd.color);
                     break;
                 case DebugDrawCommand::CIRCLE:
-                    // Approximate circle with quad
-                    Graphics::Renderer2D::DrawQuad(cmd.center, 
-                                                  {cmd.radius * 2.0f, cmd.radius * 2.0f},
-                                                  {cmd.radius, cmd.radius}, 
-                                                  cmd.color);
+                    Graphics::Renderer2D::DrawCircle(cmd.center, cmd.radius, cmd.color);
                     break;
                 case DebugDrawCommand::POLYGON:
-                    // Approximate polygon with bounding box
                     if (!cmd.vertices.empty())
                     {
-                        Math::Vector2 min(FLT_MAX, FLT_MAX);
-                        Math::Vector2 max(-FLT_MAX, -FLT_MAX);
-                        for (const auto& vertex : cmd.vertices)
-                        {
-                            min.x = std::min(min.x, vertex.x);
-                            min.y = std::min(min.y, vertex.y);
-                            max.x = std::max(max.x, vertex.x);
-                            max.y = std::max(max.y, vertex.y);
-                        }
-                        Math::Vector2 center = {(min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f};
-                        Math::Vector2 size = {max.x - min.x, max.y - min.y};
-                        Math::Vector2 origin = {size.x * 0.5f, size.y * 0.5f};
-                        Graphics::Renderer2D::DrawQuad(center, size, origin, cmd.color);
+                        Graphics::Renderer2D::DrawPolygon(cmd.vertices, cmd.color);
                     }
                     break;
                 case DebugDrawCommand::POINT:
@@ -221,9 +205,15 @@ namespace Nyon::ECS
                 collider = &m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             }
             
-            // Get transform data (would come from TransformComponent)
+            // Get transform data from TransformComponent if available so debug shapes match the scene
             Math::Vector2 position = {0.0f, 0.0f};
             float angle = 0.0f;
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                position = transform.position;
+                angle = transform.rotation;
+            }
             
             // Color based on body state
             Math::Vector3 color = {0.0f, 1.0f, 0.0f}; // Green default
@@ -272,9 +262,18 @@ namespace Nyon::ECS
                 
             const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             
+            // Use transform position and rotation if available so AABBs line up with rotated shapes
             Math::Vector2 position = {0.0f, 0.0f};
+            float angle = 0.0f;
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                position = transform.position;
+                angle = transform.rotation;
+            }
+            
             Math::Vector2 min, max;
-            collider.CalculateAABB(position, min, max);
+            collider.CalculateAABB(position, angle, min, max);
             
             // Draw AABB outline using queued commands
             Math::Vector3 color = {1.0f, 0.0f, 0.0f}; // Red for AABBs
@@ -300,7 +299,13 @@ namespace Nyon::ECS
         {
             const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
             
-            Math::Vector2 position = {0.0f, 0.0f}; // From TransformComponent
+            Math::Vector2 position = {0.0f, 0.0f};
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                position = transform.position;
+            }
+            
             Math::Vector2 com = position + body.centerOfMass;
             
             // Draw center of mass as a small point using queued command

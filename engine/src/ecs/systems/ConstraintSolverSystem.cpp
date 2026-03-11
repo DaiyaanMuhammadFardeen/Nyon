@@ -1,6 +1,12 @@
 #include "nyon/ecs/systems/ConstraintSolverSystem.h"
 #include "nyon/ecs/EntityManager.h"
 #include "nyon/ecs/ComponentStore.h"
+#include "nyon/ecs/components/TransformComponent.h"
+#include <unordered_map>
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <chrono>
 
 namespace Nyon::ECS
 {
@@ -51,15 +57,28 @@ namespace Nyon::ECS
         {
             const auto* body = activeBodies[i];
             auto& solverBody = m_SolverBodies[i];
+            uint32_t entityId = activeEntityIds[i];
             
-            solverBody.position = {0.0f, 0.0f}; // Get from TransformComponent
-            solverBody.angle = 0.0f;            // Get from TransformComponent
+            // Read transform for initial position/rotation if available.
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                solverBody.position = transform.position;
+                solverBody.angle = transform.rotation;
+            }
+            else
+            {
+                solverBody.position = {0.0f, 0.0f};
+                solverBody.angle = 0.0f;
+            }
             solverBody.velocity = body->velocity;
             solverBody.angularVelocity = body->angularVelocity;
             solverBody.invMass = body->inverseMass;
             solverBody.invInertia = body->inverseInertia;
             solverBody.localCenter = body->centerOfMass;
             solverBody.isStatic = body->isStatic;
+            solverBody.isKinematic = body->isKinematic;
+            solverBody.entityId = entityId;
         }
         
         // Initialize constraints
@@ -115,15 +134,105 @@ namespace Nyon::ECS
         m_VelocityConstraints.clear();
         m_PositionConstraints.clear();
         
-        // For now, leave constraint lists empty as placeholder
-        // In a complete implementation, this would:
-        // 1. Query active contacts from collision detection
-        // 2. Create velocity and position constraints for each contact
-        // 3. Initialize constraint parameters (mass, bias, etc.)
-        
-        // TODO: Implement proper contact constraint initialization
-        // This requires access to contact manifolds and contact points
-        // from the collision detection system
+        if (!m_PhysicsWorld)
+            return;
+
+        const auto& manifolds = m_PhysicsWorld->contactManifolds;
+        if (manifolds.empty())
+            return;
+
+        // Map entity IDs to solver body indices.
+        std::unordered_map<uint32_t, uint32_t> entityToIndex;
+        entityToIndex.reserve(m_SolverBodies.size());
+        for (uint32_t i = 0; i < m_SolverBodies.size(); ++i)
+        {
+            entityToIndex[m_SolverBodies[i].entityId] = i;
+        }
+
+        m_VelocityConstraints.reserve(manifolds.size());
+        m_PositionConstraints.reserve(manifolds.size());
+
+        for (const auto& manifold : manifolds)
+        {
+            if (!manifold.touching || manifold.points.empty())
+                continue;
+
+            auto itA = entityToIndex.find(manifold.entityIdA);
+            auto itB = entityToIndex.find(manifold.entityIdB);
+            if (itA == entityToIndex.end() || itB == entityToIndex.end())
+                continue;
+
+            uint32_t indexA = itA->second;
+            uint32_t indexB = itB->second;
+
+            auto& bodyA = m_SolverBodies[indexA];
+            auto& bodyB = m_SolverBodies[indexB];
+
+            ContactVelocityConstraint vc{};
+            vc.indexA = indexA;
+            vc.indexB = indexB;
+            vc.normal = manifold.normal;
+            vc.tangent = Math::Vector2(-manifold.normal.y, manifold.normal.x);
+            vc.invMassA = bodyA.invMass;
+            vc.invMassB = bodyB.invMass;
+            vc.invIA = bodyA.invInertia;
+            vc.invIB = bodyB.invInertia;
+            vc.friction = manifold.friction;
+            vc.restitution = manifold.restitution;
+
+            ContactPositionConstraint pc{};
+            pc.indexA = indexA;
+            pc.indexB = indexB;
+            pc.localNormal = manifold.localNormal;
+            pc.localPoint = manifold.localPoint;
+            pc.invMassA = bodyA.invMass;
+            pc.invMassB = bodyB.invMass;
+            pc.localCenterA = bodyA.localCenter;
+            pc.localCenterB = bodyB.localCenter;
+            pc.invIA = bodyA.invInertia;
+            pc.invIB = bodyB.invInertia;
+
+            const int pointCount = static_cast<int>(std::min<size_t>(manifold.points.size(), 2));
+            vc.pointCount = pointCount;
+            pc.pointCount = pointCount;
+
+            for (int j = 0; j < pointCount; ++j)
+            {
+                const auto& mp = manifold.points[j];
+                auto& vcp = vc.points[j];
+
+                // Relative contact position from centers of mass.
+                Math::Vector2 rA = mp.position - (bodyA.position + bodyA.localCenter);
+                Math::Vector2 rB = mp.position - (bodyB.position + bodyB.localCenter);
+
+                vcp.rA = rA;
+                vcp.rB = rB;
+                vcp.normalImpulse = mp.normalImpulse;
+                vcp.tangentImpulse = mp.tangentImpulse;
+
+                // Effective mass for normal axis.
+                float rnA = Math::Vector2::Cross(rA, vc.normal);
+                float rnB = Math::Vector2::Cross(rB, vc.normal);
+                float kNormal = vc.invMassA + vc.invMassB + vc.invIA * rnA * rnA + vc.invIB * rnB * rnB;
+                vcp.normalMass = (kNormal > 0.0f) ? 1.0f / kNormal : 0.0f;
+
+                // Effective mass for tangent axis (friction).
+                float rtA = Math::Vector2::Cross(rA, vc.tangent);
+                float rtB = Math::Vector2::Cross(rB, vc.tangent);
+                float kTangent = vc.invMassA + vc.invMassB + vc.invIA * rtA * rtA + vc.invIB * rtB * rtB;
+                vcp.tangentMass = (kTangent > 0.0f) ? 1.0f / kTangent : 0.0f;
+
+                // Compute velocity bias for restitution (bouncing)
+                // Only apply restitution if collision is energetic enough
+                vcp.velocityBias = 0.0f;
+                
+                // Store local-space contact point for position constraints.
+                pc.localPoints[j] = mp.position;
+            }
+
+            m_VelocityConstraints.push_back(vc);
+            m_PositionConstraints.push_back(pc);
+        }
     }
     
     void ConstraintSolverSystem::WarmStart()
@@ -160,17 +269,28 @@ namespace Nyon::ECS
         
         for (auto& body : m_SolverBodies)
         {
-            if (body.isStatic) continue;
+            if (body.isStatic || body.isKinematic) continue;
             
-            // Gravity is already applied in PhysicsIntegrationSystem
-            // Only apply damping for stability
-            body.velocity = body.velocity * 0.999f; // Small damping for stability
+            // Apply forces accumulated in PhysicsIntegrationSystem
+            // F = ma, so a = F/m
+            Math::Vector2 acceleration = {0.0f, 0.0f};
+            
+            // Gravity is applied through force accumulation in PhysicsIntegrationSystem
+            // Here we only apply velocity-level damping for stability
+            
+            // Linear damping (air resistance)
+            float linearDamping = 0.999f; // Small damping for numerical stability
+            body.velocity = body.velocity * linearDamping;
+            
+            // Angular damping (rotational air resistance)
+            float angularDamping = 0.995f;
+            body.angularVelocity = body.angularVelocity * angularDamping;
         }
     }
     
     void ConstraintSolverSystem::SolveVelocityConstraints()
     {
-        // Sequential impulse solver iterations
+        // Sequential impulse solver with friction and angular momentum
         for (int i = 0; i < m_PhysicsWorld->velocityIterations; ++i)
         {
             for (auto& vc : m_VelocityConstraints)
@@ -188,37 +308,68 @@ namespace Nyon::ECS
                 float iA = vc.invIA;
                 float iB = vc.invIB;
                 
-                // Solve normal constraints
+                // Solve each contact point
                 for (int j = 0; j < vc.pointCount; ++j)
                 {
                     auto& vcp = vc.points[j];
                     
-                    // Relative velocity at contact point
+                    // Relative velocity at contact point (including angular components)
                     Math::Vector2 dv = vB + Math::Vector2{-wB * vcp.rB.y, wB * vcp.rB.x} -
                                       vA - Math::Vector2{-wA * vcp.rA.y, wA * vcp.rA.x};
                     
-                    // Compute normal impulse
+                    // === NORMAL IMPULSE ===
                     float vn = dv.x * vc.normal.x + dv.y * vc.normal.y;
-                    float impulse = -vcp.normalMass * (vn - vcp.velocityBias);
+                    float normalImpulse = -vcp.normalMass * (vn - vcp.velocityBias);
                     
-                    // Clamp impulse
-                    float oldImpulse = vcp.normalImpulse;
-                    vcp.normalImpulse = std::max(oldImpulse + impulse, 0.0f);
-                    impulse = vcp.normalImpulse - oldImpulse;
+                    // Clamp normal impulse (only pushing, not pulling)
+                    float oldNormalImpulse = vcp.normalImpulse;
+                    vcp.normalImpulse = std::max(oldNormalImpulse + normalImpulse, 0.0f);
+                    normalImpulse = vcp.normalImpulse - oldNormalImpulse;
                     
-                    // Apply impulse
-                    Math::Vector2 P = vc.normal * impulse;
+                    // Apply normal impulse
+                    Math::Vector2 normalP = vc.normal * normalImpulse;
                     
                     if (!bodyA.isStatic)
                     {
-                        vA = vA - P * mA;
-                        wA = wA - iA * (vcp.rA.x * P.y - vcp.rA.y * P.x);
+                        vA = vA - normalP * mA;
+                        wA = wA - iA * Math::Vector2::Cross(vcp.rA, normalP);
                     }
                     
                     if (!bodyB.isStatic)
                     {
-                        vB = vB + P * mB;
-                        wB = wB + iB * (vcp.rB.x * P.y - vcp.rB.y * P.x);
+                        vB = vB + normalP * mB;
+                        wB = wB + iB * Math::Vector2::Cross(vcp.rB, normalP);
+                    }
+                    
+                    // === TANGENT/FRICTION IMPULSE ===
+                    // Compute relative velocity in tangent direction
+                    float vt = dv.x * vc.tangent.x + dv.y * vc.tangent.y;
+                    
+                    // Compute friction impulse using Coulomb friction model
+                    float tangentImpulse = -vcp.tangentMass * vt;
+                    
+                    // Apply Coulomb friction cone constraint
+                    float maxFriction = vc.friction * vcp.normalImpulse;
+                    tangentImpulse = std::clamp(tangentImpulse, -maxFriction, maxFriction);
+                    
+                    // Store accumulated tangent impulse
+                    float oldTangentImpulse = vcp.tangentImpulse;
+                    vcp.tangentImpulse = oldTangentImpulse + tangentImpulse;
+                    tangentImpulse = vcp.tangentImpulse - oldTangentImpulse;
+                    
+                    // Apply friction impulse
+                    Math::Vector2 tangentP = vc.tangent * tangentImpulse;
+                    
+                    if (!bodyA.isStatic)
+                    {
+                        vA = vA - tangentP * mA;
+                        wA = wA - iA * Math::Vector2::Cross(vcp.rA, tangentP);
+                    }
+                    
+                    if (!bodyB.isStatic)
+                    {
+                        vB = vB + tangentP * mB;
+                        wB = wB + iB * Math::Vector2::Cross(vcp.rB, tangentP);
                     }
                 }
                 
@@ -243,31 +394,111 @@ namespace Nyon::ECS
     
     void ConstraintSolverSystem::SolvePositionConstraints()
     {
-        float k_tolerance = 0.01f;
-        bool positionsOkay = true;
-        
-        for (int i = 0; i < m_PhysicsWorld->positionIterations; ++i)
+        // Baumgarte stabilization with rotational correction
+        if (m_VelocityConstraints.empty())
+            return;
+
+        const float linearSlop = 0.005f;
+        const float maxCorrection = 0.2f;
+        const float angularSlop = 0.01f; // ~0.5 degrees
+        const float maxAngularCorrection = 0.1f; // ~5.7 degrees
+
+        for (int it = 0; it < m_PhysicsWorld->positionIterations; ++it)
         {
-            float minSeparation = 0.0f;
-            
-            for (const auto& pc : m_PositionConstraints)
+            bool allOK = true;
+
+            for (auto& vc : m_VelocityConstraints)
             {
-                // Position constraint solving would go here
-                // This is a placeholder implementation
-                minSeparation = std::min(minSeparation, -0.001f);
+                auto& bodyA = m_SolverBodies[vc.indexA];
+                auto& bodyB = m_SolverBodies[vc.indexB];
+
+                for (int j = 0; j < vc.pointCount; ++j)
+                {
+                    auto& vcp = vc.points[j];
+
+                    // World-space contact points using current positions
+                    Math::Vector2 pA = bodyA.position + bodyA.localCenter + vcp.rA;
+                    Math::Vector2 pB = bodyB.position + bodyB.localCenter + vcp.rB;
+                    Math::Vector2 d = pB - pA;
+                    
+                    // Separation distance (negative = penetration)
+                    float separation = Math::Vector2::Dot(d, vc.normal);
+
+                    // Only correct when there is noticeable penetration
+                    float C = std::min(separation + linearSlop, 0.0f);
+                    if (C == 0.0f)
+                        continue;
+
+                    allOK = false;
+
+                    // Compute positional correction magnitude
+                    float correctionMag = std::clamp(-C, 0.0f, maxCorrection);
+                    Math::Vector2 correction = vc.normal * correctionMag;
+
+                    // Apply linear position correction
+                    float totalInvMass = vc.invMassA + vc.invMassB;
+                    if (totalInvMass > 0.0f)
+                    {
+                        if (!bodyA.isStatic)
+                        {
+                            bodyA.position = bodyA.position - correction * (vc.invMassA / totalInvMass);
+                        }
+                        if (!bodyB.isStatic)
+                        {
+                            bodyB.position = bodyB.position + correction * (vc.invMassB / totalInvMass);
+                        }
+                    }
+
+                    // Apply rotational correction to reduce angular penetration
+                    // This helps objects rotate away from each other when they're interpenetrating
+                    if (!bodyA.isStatic && vc.invIA > 0.0f)
+                    {
+                        float angularCorrection = Math::Vector2::Cross(vcp.rA, correction) * vc.invIA * 0.1f;
+                        angularCorrection = std::clamp(angularCorrection, -maxAngularCorrection, maxAngularCorrection);
+                        bodyA.angle -= angularCorrection;
+                    }
+                    
+                    if (!bodyB.isStatic && vc.invIB > 0.0f)
+                    {
+                        float angularCorrection = Math::Vector2::Cross(vcp.rB, correction) * vc.invIB * 0.1f;
+                        angularCorrection = std::clamp(angularCorrection, -maxAngularCorrection, maxAngularCorrection);
+                        bodyB.angle += angularCorrection;
+                    }
+                }
             }
-            
-            if (minSeparation >= -k_tolerance)
-            {
-                positionsOkay = true;
+
+            if (allOK)
                 break;
-            }
         }
     }
     
     void ConstraintSolverSystem::StoreImpulses()
     {
-        // Store computed impulses for warm starting next frame
-        // This will be implemented when we have the full contact system
+        // Store computed impulses back to manifolds for warm starting next frame
+        if (!m_PhysicsWorld)
+            return;
+        
+        // Update contact manifolds with solved impulses
+        for (auto& vc : m_VelocityConstraints)
+        {
+            // Find corresponding manifold
+            auto& bodyA = m_SolverBodies[vc.indexA];
+            auto& bodyB = m_SolverBodies[vc.indexB];
+            
+            for (auto& manifold : m_PhysicsWorld->contactManifolds)
+            {
+                if (manifold.entityIdA == bodyA.entityId && 
+                    manifold.entityIdB == bodyB.entityId)
+                {
+                    // Store impulses back to contact points
+                    for (int j = 0; j < vc.pointCount && j < static_cast<int>(manifold.points.size()); ++j)
+                    {
+                        manifold.points[j].normalImpulse = vc.points[j].normalImpulse;
+                        manifold.points[j].tangentImpulse = vc.points[j].tangentImpulse;
+                    }
+                    break;
+                }
+            }
+        }
     }
 }

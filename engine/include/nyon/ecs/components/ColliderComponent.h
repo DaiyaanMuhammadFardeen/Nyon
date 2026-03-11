@@ -405,6 +405,62 @@ namespace Nyon::ECS
             }
         }
         
+        // Approximate moment of inertia about the local origin for a unit-density body.
+        // The caller should multiply by actual mass if needed.
+        float CalculateInertiaForUnitDensity() const
+        {
+            switch (type)
+            {
+                case ShapeType::Circle:
+                {
+                    const auto& circle = GetCircle();
+                    // I = 0.5 * m * r^2  → for unit density, m = area = π r^2
+                    // So I = 0.5 * π * r^4
+                    float r2 = circle.radius * circle.radius;
+                    return 0.5f * 3.14159f * r2 * r2;
+                }
+                
+                case ShapeType::Polygon:
+                {
+                    // Approximate polygon as box using its AABB extents.
+                    const auto& polygon = GetPolygon();
+                    if (polygon.vertices.size() < 3) return 0.0f;
+                    
+                    Math::Vector2 min = polygon.vertices[0];
+                    Math::Vector2 max = polygon.vertices[0];
+                    for (const auto& v : polygon.vertices)
+                    {
+                        min.x = std::min(min.x, v.x);
+                        min.y = std::min(min.y, v.y);
+                        max.x = std::max(max.x, v.x);
+                        max.y = std::max(max.y, v.y);
+                    }
+                    float w = max.x - min.x;
+                    float h = max.y - min.y;
+                    // Box inertia for unit density: I = (w^2 + h^2) * area / 12
+                    float area = CalculateArea();
+                    return area * (w * w + h * h) / 12.0f;
+                }
+                
+                case ShapeType::Capsule:
+                {
+                    const auto& capsule = GetCapsule();
+                    Math::Vector2 diff = capsule.center2 - capsule.center1;
+                    float h = std::sqrt(diff.x * diff.x + diff.y * diff.y);
+                    float r = capsule.radius;
+                    // Rough approximation: treat as rectangle (2r x h) plus two circles.
+                    float rectArea = 2.0f * r * h;
+                    float rectInertia = rectArea * (h * h + (2.0f * r) * (2.0f * r)) / 12.0f;
+                    float circleArea = 3.14159f * r * r;
+                    float circleInertia = 0.5f * 3.14159f * r * r * r * r * 2.0f; // two circles
+                    return rectInertia + circleInertia;
+                }
+                
+                default:
+                    return 0.0f;
+            }
+        }
+        
         float CalculateMass(float densityOverride = -1.0f) const
         {
             float actualDensity = (densityOverride > 0.0f) ? densityOverride : material.density;

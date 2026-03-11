@@ -267,23 +267,41 @@ namespace Game
         // Using static methods directly from InputManager
         auto& playerBody = GetComponentStore().GetComponent<Nyon::ECS::PhysicsBodyComponent>(m_PlayerId);
         
-        const float moveForce = 2000.0f;
-        const float jumpForce = 15000.0f;
+        // Tunable player movement parameters
+        const float maxRunSpeed = 400.0f;
+        const float accel = 6000.0f;
+        const float damping = 8.0f;      // how quickly we slow down when no input
+        const float jumpImpulse = 12000.0f;
         
-        // Horizontal movement
+        // Desired horizontal velocity based on input
+        float targetVelX = 0.0f;
         if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A))
         {
-            playerBody.ApplyForce({-moveForce, 0});
+            targetVelX = -maxRunSpeed;
         }
-        if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D))
+        else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D))
         {
-            playerBody.ApplyForce({moveForce, 0});
+            targetVelX = maxRunSpeed;
         }
         
-        // Jumping (simple implementation)
-        if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_SPACE) && playerBody.IsStablyGrounded())
+        // Smoothly move velocity toward target
+        float deltaV = targetVelX - playerBody.velocity.x;
+        float maxDelta = accel * deltaTime;
+        if (deltaV > maxDelta) deltaV = maxDelta;
+        else if (deltaV < -maxDelta) deltaV = -maxDelta;
+        
+        playerBody.velocity.x += deltaV;
+        
+        // Apply extra damping when there is no input to make stopping snappy
+        if (std::abs(targetVelX) < 1e-3f)
         {
-            playerBody.ApplyLinearImpulse({0, -jumpForce});
+            playerBody.velocity.x -= playerBody.velocity.x * std::min(damping * deltaTime, 1.0f);
+        }
+        
+        // Jumping: only when grounded and on key press (not held)
+        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_SPACE) && playerBody.IsStablyGrounded())
+        {
+            playerBody.ApplyLinearImpulse({0.0f, -jumpImpulse});
         }
     }
     
@@ -340,14 +358,6 @@ namespace Game
         componentStore.AddComponent<Nyon::ECS::ColliderComponent>(entityId, Nyon::ECS::ColliderComponent());
         componentStore.AddComponent<Nyon::ECS::RenderComponent>(entityId, Nyon::ECS::RenderComponent());
         
-        // Configure physics body
-        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
-        body.isStatic = isStatic;
-        // Proper mass calculation: mass = density × area
-        // For a rectangle: area = width × height
-        body.mass = density * size.x * size.y;
-        body.UpdateMassProperties();
-        
         // Configure collider
         auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
         collider.type = Nyon::ECS::ColliderComponent::ShapeType::Polygon;
@@ -366,6 +376,19 @@ namespace Game
         boxShape.CalculateProperties();
         collider.shape = boxShape;
         collider.density = density;
+        
+        // Configure physics body (mass and inertia from collider)
+        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
+        body.isStatic = isStatic;
+        float area = collider.CalculateArea();
+        body.mass = isStatic ? 0.0f : density * area;
+        // Inertia for unit density, then scaled by mass / area
+        float unitInertia = collider.CalculateInertiaForUnitDensity();
+        if (!isStatic && area > 0.0f)
+        {
+            body.inertia = unitInertia * (body.mass / area);
+        }
+        body.UpdateMassProperties();
         
         // Configure renderer
         auto& renderer = componentStore.GetComponent<Nyon::ECS::RenderComponent>(entityId);
@@ -391,16 +414,21 @@ namespace Game
         componentStore.AddComponent<Nyon::ECS::ColliderComponent>(entityId, Nyon::ECS::ColliderComponent());
         componentStore.AddComponent<Nyon::ECS::RenderComponent>(entityId, Nyon::ECS::RenderComponent());
         
-        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
-        body.isStatic = isStatic;
-        // Proper mass calculation: mass = density × π × r²
-        body.mass = density * 3.14159f * radius * radius;
-        body.UpdateMassProperties();
-        
         auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
         collider.type = Nyon::ECS::ColliderComponent::ShapeType::Circle;
         collider.shape = Nyon::ECS::ColliderComponent::CircleShape{{0, 0}, radius};
         collider.density = density;
+        
+        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
+        body.isStatic = isStatic;
+        float area = collider.CalculateArea();
+        body.mass = isStatic ? 0.0f : density * area;
+        float unitInertia = collider.CalculateInertiaForUnitDensity();
+        if (!isStatic && area > 0.0f)
+        {
+            body.inertia = unitInertia * (body.mass / area);
+        }
+        body.UpdateMassProperties();
         
         auto& renderer = componentStore.GetComponent<Nyon::ECS::RenderComponent>(entityId);
         renderer.size = {radius * 2.0f, radius * 2.0f};
@@ -426,19 +454,34 @@ namespace Game
         componentStore.AddComponent<Nyon::ECS::ColliderComponent>(entityId, Nyon::ECS::ColliderComponent());
         componentStore.AddComponent<Nyon::ECS::RenderComponent>(entityId, Nyon::ECS::RenderComponent());
         
+        auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
+        // For now approximate capsules with a box polygon so they participate
+        // fully in the SAT manifold generation and constraint solver.
+        collider.type = Nyon::ECS::ColliderComponent::ShapeType::Polygon;
+
+        Nyon::ECS::ColliderComponent::PolygonShape poly;
+        float halfWidth = radius;
+        float halfHeight = height * 0.5f;
+        poly.vertices = {
+            {-halfWidth, -halfHeight},
+            { halfWidth, -halfHeight},
+            { halfWidth,  halfHeight},
+            {-halfWidth,  halfHeight}
+        };
+        poly.CalculateProperties();
+        collider.shape = poly;
+        collider.density = density;
+        
         auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
         body.isStatic = isStatic;
-        // Proper mass calculation: mass = density × (π × r² + 2 × r × h)
-        // Capsule area = circle area + rectangle area
-        body.mass = density * (3.14159f * radius * radius + 2.0f * radius * height);
+        float area = collider.CalculateArea();
+        body.mass = isStatic ? 0.0f : density * area;
+        float unitInertia = collider.CalculateInertiaForUnitDensity();
+        if (!isStatic && area > 0.0f)
+        {
+            body.inertia = unitInertia * (body.mass / area);
+        }
         body.UpdateMassProperties();
-        
-        auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
-        collider.type = Nyon::ECS::ColliderComponent::ShapeType::Capsule;
-        collider.shape = Nyon::ECS::ColliderComponent::CapsuleShape{
-            {0, -height * 0.5f}, {0, height * 0.5f}, radius
-        };
-        collider.density = density;
         
         auto& renderer = componentStore.GetComponent<Nyon::ECS::RenderComponent>(entityId);
         renderer.size = {radius * 2.0f, height + radius * 2.0f};
