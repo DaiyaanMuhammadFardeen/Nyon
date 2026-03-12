@@ -1,8 +1,12 @@
 #pragma once
 
+#include "nyon/ecs/EntityManager.h"
+#include "nyon/ecs/ComponentStore.h"
 #include "nyon/ecs/System.h"
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <typeindex>
 
 namespace Nyon::ECS
 {
@@ -27,6 +31,8 @@ namespace Nyon::ECS
         {
             system->Initialize(*m_EntityManager, *m_ComponentStore);
             m_Systems.push_back(std::move(system));
+            // Cache system pointer in lookup table for O(1) access
+            m_SystemLookup[typeid(T)] = m_Systems.back().get();
         }
         
         /**
@@ -43,14 +49,8 @@ namespace Nyon::ECS
         template<typename T>
         T* GetSystem()
         {
-            for (auto& system : m_Systems)
-            {
-                if (T* typedSystem = dynamic_cast<T*>(system.get()))
-                {
-                    return typedSystem;
-                }
-            }
-            return nullptr;
+            auto it = m_SystemLookup.find(typeid(T));
+            return it != m_SystemLookup.end() ? static_cast<T*>(it->second) : nullptr;
         }
         
         /**
@@ -62,5 +62,6 @@ namespace Nyon::ECS
         EntityManager* m_EntityManager;
         ComponentStore* m_ComponentStore;
         std::vector<std::unique_ptr<System>> m_Systems;
+        std::unordered_map<std::type_index, System*> m_SystemLookup; // O(1) system lookup
     };
 }

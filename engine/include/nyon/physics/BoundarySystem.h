@@ -6,7 +6,8 @@
 #include "nyon/math/Vector2.h"
 #include "nyon/ecs/components/ColliderComponent.h"
 #include "nyon/ecs/components/TransformComponent.h"
-#include "nyon/ecs/EntityTypes.h"
+#include "nyon/ecs/EntityManager.h"
+#include <array>
 #include <vector>
 #include <cstdint>
 
@@ -41,32 +42,32 @@ namespace Nyon::Physics
         {
             std::array<Plane, 4> planes;
             
-            // Left wall (normal points right)
+            // Left wall (normal points right): x >= minBounds.x
             planes[0] = {
                 .normal = {1.0f, 0.0f},
                 .point = {minBounds.x, minBounds.y},
-                .distance = -minBounds.x
+                .distance = minBounds.x
             };
             
-            // Right wall (normal points left)
+            // Right wall (normal points left): x <= maxBounds.x
             planes[1] = {
                 .normal = {-1.0f, 0.0f},
                 .point = {maxBounds.x, minBounds.y},
-                .distance = maxBounds.x
+                .distance = -maxBounds.x
             };
             
-            // Bottom wall (normal points up)
+            // Bottom wall (normal points up): y >= minBounds.y
             planes[2] = {
                 .normal = {0.0f, 1.0f},
                 .point = {minBounds.x, minBounds.y},
-                .distance = -minBounds.y
+                .distance = minBounds.y
             };
             
-            // Top wall (normal points down)
+            // Top wall (normal points down): y <= maxBounds.y
             planes[3] = {
                 .normal = {0.0f, -1.0f},
                 .point = {minBounds.x, maxBounds.y},
-                .distance = maxBounds.y
+                .distance = -maxBounds.y
             };
             
             return planes;

@@ -15,9 +15,9 @@ namespace Nyon::Physics
     struct TOIResult
     {
         bool hit = false;
-        float fraction;           // Time of impact as fraction of dt [0,1]
-        Math::Vector2 point;      // Contact point at TOI
-        Math::Vector2 normal;     // Contact normal at TOI
+        float fraction = 1.0f;      // Time of impact as fraction of dt [0,1], initialized to 1.0f for safety
+        Math::Vector2 point;        // Contact point at TOI
+        Math::Vector2 normal;       // Contact normal at TOI
         uint32_t entityIdA;
         uint32_t entityIdB;
     };
@@ -66,12 +66,16 @@ namespace Nyon::Physics
          * 
          * Uses conservative advancement with swept circle test.
          * 
-         * @param circleCenter Start position of circle
+         * IMPORTANT: Polygon vertices MUST be pre-transformed to world space before calling.
+         * The polygon position is implicitly the origin of the vertex coordinates.
+         * Angular velocity is currently NOT handled in the implementation.
+         * 
+         * @param circleCenter Start position of circle (world space)
          * @param circleRadius Radius of circle
          * @param circleVelocity Velocity of circle
-         * @param polygonVertices Polygon vertices in world space
-         * @param polygonVelocity Velocity of polygon
-         * @param polygonAngularVelocity Angular velocity of polygon
+         * @param polygonVertices Polygon vertices in WORLD SPACE (pre-transformed)
+         * @param polygonVelocity Velocity of polygon center
+         * @param polygonAngularVelocity Angular velocity of polygon (currently ignored - future enhancement)
          * @param dt Time step
          * @return TOIResult with time of impact
          */

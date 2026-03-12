@@ -4,8 +4,6 @@
 #include "nyon/ecs/components/PhysicsBodyComponent.h"
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/ecs/components/PhysicsWorldComponent.h"
-#include <fstream>
-#include <chrono>
 
 namespace Nyon::ECS
 {
@@ -98,15 +96,8 @@ namespace Nyon::ECS
         void IntegrateVelocity(PhysicsBodyComponent& body, TransformComponent& transform,
                               const Math::Vector2& gravity, float deltaTime)
         {
-            // Apply gravity only to non-grounded bodies
-            // This prevents perpetual sinking of grounded objects
-            Math::Vector2 acceleration = {0.0f, 0.0f};
-            
-            // Only apply gravity if body is not stably grounded
-            if (!body.IsStablyGrounded())
-            {
-                acceleration = gravity;
-            }
+            // Apply gravity always - constraint solver handles contact forces
+            Math::Vector2 acceleration = gravity;
             
             // Add force contribution (F/m)
             if (body.inverseMass > 0.0f)
@@ -163,38 +154,6 @@ namespace Nyon::ECS
             
             // Update sleep state based on velocity
             UpdateSleepState(body, deltaTime);
-
-            // #region agent log
-            try
-            {
-                using namespace std::chrono;
-                auto now = time_point_cast<milliseconds>(system_clock::now());
-                long long ts = now.time_since_epoch().count();
-                std::ofstream out("/home/daiyaan2002/Desktop/Projects/Nyon/.cursor/debug-b63f20.log", std::ios::app);
-                if (out.is_open())
-                {
-                    out << "{\"sessionId\":\"b63f20\","
-                        << "\"id\":\"log_integrate_velocity_" << ts << "\","
-                        << "\"timestamp\":" << ts << ","
-                        << "\"location\":\"PhysicsIntegrationSystem.h:IntegrateVelocity\","
-                        << "\"message\":\"integrate velocity\","
-                        << "\"runId\":\"initial\","
-                        << "\"hypothesisId\":\"H4\","
-                        << "\"data\":{"
-                            << "\"oldVelX\":" << oldVelocity.x << ","
-                            << "\"oldVelY\":" << oldVelocity.y << ","
-                            << "\"newVelX\":" << body.velocity.x << ","
-                            << "\"newVelY\":" << body.velocity.y << ","
-                            << "\"invMass\":" << body.inverseMass
-                        << "}"
-                        << "}"
-                        << std::endl;
-                }
-            }
-            catch (...)
-            {
-            }
-            // #endregion
         }
         
         /**
@@ -206,17 +165,9 @@ namespace Nyon::ECS
             // Update position: x = x0 + v * dt
             transform.position = transform.position + body.velocity * deltaTime;
             
-            // Apply boundary constraints to keep objects within screen bounds
-            ApplyBoundaryConstraints(body, transform);
-            
             // Update rotation: θ = θ0 + ω * dt
+            // No wrapping needed - angles can accumulate beyond 2π
             transform.rotation += body.angularVelocity * deltaTime;
-            
-            // Keep rotation in reasonable bounds
-            if (transform.rotation > 6.28318530718f) // 2π
-                transform.rotation -= 6.28318530718f;
-            else if (transform.rotation < -6.28318530718f)
-                transform.rotation += 6.28318530718f;
         }
         
         /**
@@ -248,52 +199,12 @@ namespace Nyon::ECS
                 body.sleepTimer += deltaTime;
                 
                 // Put to sleep if inactive long enough
-                if (body.sleepTimer >= body.SLEEP_THRESHOLD)
+                if (body.sleepTimer >= body.TIME_TO_SLEEP)
                 {
                     body.SetAwake(false);
                     body.velocity = {0.0f, 0.0f};
                     body.angularVelocity = 0.0f;
                 }
-            }
-        }
-        
-        /**
-         * @brief Apply screen boundary constraints to prevent objects from leaving play area
-         * 
-         * Enforces screen boundaries similar to the original CollisionSystem implementation.
-         * Also contributes to grounded state when objects hit bottom boundary.
-         */
-        void ApplyBoundaryConstraints(PhysicsBodyComponent& body, TransformComponent& transform)
-        {
-            // Screen boundaries (matches original CollisionSystem values)
-            const float SCREEN_WIDTH = 1280.0f;
-            const float SCREEN_HEIGHT = 720.0f;
-            const float PLAYER_SIZE = 32.0f; // Approximate size for boundary calculations
-            
-            // Left boundary
-            if (transform.position.x < 0) {
-                transform.position.x = 0;
-                body.velocity.x = std::max(0.0f, body.velocity.x);
-            }
-            
-            // Right boundary
-            if (transform.position.x > SCREEN_WIDTH - PLAYER_SIZE) {
-                transform.position.x = SCREEN_WIDTH - PLAYER_SIZE;
-                body.velocity.x = std::min(0.0f, body.velocity.x);
-            }
-            
-            // Bottom boundary (ground) - also contributes to grounded state
-            if (transform.position.y > SCREEN_HEIGHT - PLAYER_SIZE) {
-                transform.position.y = SCREEN_HEIGHT - PLAYER_SIZE;
-                body.velocity.y = std::min(0.0f, body.velocity.y);
-                // Contribute to grounded frames (similar to CollisionSystem)
-                body.groundedFrames++;
-            }
-            
-            // Top boundary
-            if (transform.position.y < 0) {
-                transform.position.y = 0;
-                body.velocity.y = std::abs(body.velocity.y) * 0.5f; // Bounce with energy loss
             }
         }
         

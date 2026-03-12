@@ -10,6 +10,8 @@
 #include <nyon/ecs/components/TransformComponent.h>
 #include <nyon/ecs/components/PhysicsBodyComponent.h>
 #include <nyon/ecs/components/ColliderComponent.h>
+#include <nyon/ecs/ComponentStore.h>
+#include <nyon/math/Vector2.h>
 #include <vector>
 #include <unordered_map>
 
@@ -24,8 +26,8 @@ struct BroadPhasePair
     uint32_t entityIdB;
     uint32_t shapeIdA;
     uint32_t shapeIdB;
-    AABB aabbA;
-    AABB aabbB;
+    Nyon::Physics::AABB aabbA;
+    Nyon::Physics::AABB aabbB;
 };
 
 /**
@@ -33,7 +35,7 @@ struct BroadPhasePair
  */
 struct NarrowPhaseContact
 {
-    ContactManifold manifold;
+    Nyon::Physics::ContactManifold manifold;
     float toi = 1.0f; // Time of impact [0,1]
     bool needsCCD = false;
 };
@@ -70,46 +72,46 @@ public:
      * @param bounds World boundaries
      */
     void Update(
-        class ECS::ComponentStore& componentStore,
+        class Nyon::ECS::ComponentStore& componentStore,
         float deltaTime,
-        const Math::Vector2& gravity,
-        const Boundary& bounds);
+        const Nyon::Math::Vector2& gravity,
+        const Nyon::Physics::Boundary& bounds);
     
     /**
      * @brief Step 1: Broad-phase pair detection using dynamic tree
      */
     void BroadPhase(
-        ECS::ComponentStore& componentStore,
-        const std::vector<ECS::EntityID>& activeEntities);
+        Nyon::ECS::ComponentStore& componentStore,
+        const std::vector<Nyon::ECS::EntityID>& activeEntities);
     
     /**
      * @brief Step 2: Narrow-phase SAT collision detection
      */
     void NarrowPhase(
-        ECS::ComponentStore& componentStore,
+        Nyon::ECS::ComponentStore& componentStore,
         float deltaTime);
     
     /**
      * @brief Step 3: Continuous collision detection for fast objects
      */
     void ContinuousCollisionDetection(
-        ECS::ComponentStore& componentStore,
+        Nyon::ECS::ComponentStore& componentStore,
         float deltaTime);
     
     /**
      * @brief Step 4: Boundary collision detection
      */
     void BoundaryCollision(
-        ECS::ComponentStore& componentStore,
-        const Boundary& bounds,
+        Nyon::ECS::ComponentStore& componentStore,
+        const Nyon::Physics::Boundary& bounds,
         float deltaTime);
     
     /**
      * @brief Step 5: Solve velocity and position constraints
      */
     void SolveConstraints(
-        ECS::ComponentStore& componentStore,
-        const Math::Vector2& gravity,
+        Nyon::ECS::ComponentStore& componentStore,
+        const Nyon::Math::Vector2& gravity,
         float deltaTime,
         int velocityIterations = 8,
         int positionIterations = 3);
@@ -118,7 +120,7 @@ public:
      * @brief Step 6: Apply stabilization and sleep management
      */
     void ApplyStabilization(
-        ECS::ComponentStore& componentStore,
+        Nyon::ECS::ComponentStore& componentStore,
         float deltaTime);
     
     /**
@@ -146,7 +148,7 @@ private:
     
     std::vector<BroadPhasePair> m_BroadPhasePairs;
     std::vector<NarrowPhaseContact> m_Contacts;
-    std::vector<ContactManifold> m_FinalContacts;
+    std::vector<Nyon::Physics::ContactManifold> m_FinalContacts;
     
     std::unordered_map<uint32_t, uint32_t> m_EntityProxyMap; // entityId -> proxyId
     
@@ -157,8 +159,8 @@ private:
      * @brief Update dynamic tree with current entity AABBs
      */
     void UpdateDynamicTree(
-        ECS::ComponentStore& componentStore,
-        const std::vector<ECS::EntityID>& activeEntities);
+        Nyon::ECS::ComponentStore& componentStore,
+        const std::vector<Nyon::ECS::EntityID>& activeEntities);
     
     /**
      * @brief Query dynamic tree for overlapping pairs
@@ -169,8 +171,8 @@ private:
      * @brief Determine if CCD is needed for a collision pair
      */
     static bool NeedsCCDForPair(
-        const ECS::PhysicsBodyComponent& bodyA,
-        const ECS::PhysicsBodyComponent& bodyB,
+        const Nyon::ECS::PhysicsBodyComponent& bodyA,
+        const Nyon::ECS::PhysicsBodyComponent& bodyB,
         float deltaTime,
         float minExtentA,
         float minExtentB);
@@ -178,18 +180,18 @@ private:
     /**
      * @brief Create solver bodies from physics components
      */
-    std::vector<SolverBody> CreateSolverBodies(
-        ECS::ComponentStore& componentStore,
-        const std::vector<ContactManifold>& contacts,
-        const Math::Vector2& gravity,
+    std::vector<Nyon::Physics::SolverBody> CreateSolverBodies(
+        Nyon::ECS::ComponentStore& componentStore,
+        const std::vector<Nyon::Physics::ContactManifold>& contacts,
+        const Nyon::Math::Vector2& gravity,
         float deltaTime);
     
     /**
      * @brief Write solved velocities back to components
      */
     void WriteBackToComponents(
-        ECS::ComponentStore& componentStore,
-        const std::vector<SolverBody>& solverBodies);
+        Nyon::ECS::ComponentStore& componentStore,
+        const std::vector<Nyon::Physics::SolverBody>& solverBodies);
 };
 
 } // namespace Nyon

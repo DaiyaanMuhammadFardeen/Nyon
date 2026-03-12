@@ -6,10 +6,15 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <mutex>
+#include <cassert>
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
+
+// PI constant with full precision
+constexpr float PI = 3.14159265358979323846f;
 
 namespace Nyon::Graphics
 {
@@ -19,19 +24,23 @@ namespace Nyon::Graphics
     
     glm::mat4 Camera2D::GetViewMatrix() const
     {
+        // TRS inverse: scale by zoom, rotate, then translate to -position
+        // GLM applies transformations right-to-left (column-major convention)
         glm::mat4 view = glm::mat4(1.0f);
-        view = glm::translate(view, glm::vec3(-position.x, -position.y, 0.0f));
-        view = glm::rotate(view, rotation, glm::vec3(0.0f, 0.0f, 1.0f));
         view = glm::scale(view, glm::vec3(zoom, zoom, 1.0f));
+        view = glm::rotate(view, -rotation, glm::vec3(0.0f, 0.0f, 1.0f));
+        view = glm::translate(view, glm::vec3(-position.x, -position.y, 0.0f));
         return view;
     }
     
     glm::mat4 Camera2D::GetProjectionMatrix(float screenWidth, float screenHeight) const
     {
+        // Y-up coordinate system: bottom=0, top=screenHeight/zoom
+        // For Y-down (screen coordinates), swap bottom and top
         float left = 0.0f;
         float right = screenWidth / zoom;
-        float bottom = screenHeight / zoom;
-        float top = 0.0f;
+        float bottom = 0.0f;
+        float top = screenHeight / zoom;
         
         return glm::ortho(left, right, bottom, top, nearPlane, farPlane);
     }
@@ -43,16 +52,25 @@ namespace Nyon::Graphics
     
     Math::Vector2 Camera2D::ScreenToWorld(Math::Vector2 screenPos, float screenWidth, float screenHeight) const
     {
+        // Convert screen coordinates [0, screenWidth] × [0, screenHeight] to NDC [-1, 1]
+        float ndcX = (2.0f * screenPos.x / screenWidth) - 1.0f;
+        float ndcY = 1.0f - (2.0f * screenPos.y / screenHeight);  // Flip Y for screen coords
+        
         glm::vec4 worldPos = glm::inverse(GetViewProjectionMatrix(screenWidth, screenHeight)) * 
-                            glm::vec4(screenPos.x, screenPos.y, 0.0f, 1.0f);
+                            glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
         return Math::Vector2(worldPos.x, worldPos.y);
     }
     
     Math::Vector2 Camera2D::WorldToScreen(Math::Vector2 worldPos, float screenWidth, float screenHeight) const
     {
-        glm::vec4 screenPos = GetViewProjectionMatrix(screenWidth, screenHeight) * 
-                             glm::vec4(worldPos.x, worldPos.y, 0.0f, 1.0f);
-        return Math::Vector2(screenPos.x, screenPos.y);
+        glm::vec4 clipPos = GetViewProjectionMatrix(screenWidth, screenHeight) * 
+                           glm::vec4(worldPos.x, worldPos.y, 0.0f, 1.0f);
+        
+        // Convert from NDC [-1, 1] to screen coordinates [0, screenWidth] × [0, screenHeight]
+        float screenX = (clipPos.x + 1.0f) * 0.5f * screenWidth;
+        float screenY = (1.0f - clipPos.y) * 0.5f * screenHeight;  // Flip Y for screen coords
+        
+        return Math::Vector2(screenX, screenY);
     }
 
     // =======================================================================
@@ -250,15 +268,8 @@ namespace Nyon::Graphics
                 
                 void main()
                 {
-                    // Basic lighting (optional - can be enhanced)
+                    // Use vertex color directly - no fake lighting
                     vec3 color = v_Color;
-                    
-                    // Simple ambient lighting based on normal
-                    if (length(v_Normal) > 0.001)
-                    {
-                        float lightIntensity = 0.8 + 0.2 * abs(v_Normal.y);
-                        color *= lightIntensity;
-                    }
                     
                     fragColor = vec4(color, 1.0);
                 }
@@ -325,6 +336,10 @@ namespace Nyon::Graphics
     };
     
     std::unique_ptr<Renderer2D::Impl> Renderer2D::s_Instance;
+    
+    // Thread-safety note: Renderer2D uses a raw static singleton pointer without mutex protection.
+    // This implementation is NOT thread-safe and should only be called from the main render thread.
+    // For multi-threaded rendering, convert to a passed-by-reference context object.
     
     // =======================================================================
     // Public API
@@ -463,7 +478,8 @@ namespace Nyon::Graphics
     void Renderer2D::DrawQuad(const Math::Vector2& position,
                              const Math::Vector2& size,
                              const Math::Vector2& origin,
-                             const Math::Vector3& color)
+                             const Math::Vector3& color,
+                             float rotation)
     {
         if (!s_Instance || !s_Instance->Initialized) return;
         
@@ -479,20 +495,31 @@ namespace Nyon::Graphics
             }
         }
         
-        const float x = position.x - origin.x;
-        const float y = position.y - origin.y;
-        const float w = size.x;
-        const float h = size.y;
+        // Build 4 corners, rotate each around position - origin, then draw 2 triangles
+        float c = std::cos(rotation);
+        float s = std::sin(rotation);
+        
+        auto rot = [&](Math::Vector2 p) -> Math::Vector2 {
+            return {p.x * c - p.y * s, p.x * s + p.y * c};
+        };
+        
+        Math::Vector2 corners[4] = {
+            position + rot(Math::Vector2(-origin.x, -origin.y)),
+            position + rot(Math::Vector2(size.x - origin.x, -origin.y)),
+            position + rot(Math::Vector2(size.x - origin.x, size.y - origin.y)),
+            position + rot(Math::Vector2(-origin.x, size.y - origin.y))
+        };
+        
         const float cr = color.x, cg = color.y, cb = color.z;
         
         // Two triangles, counter-clockwise winding
-        s_Instance->QuadBuffer.push_back({x, y + h, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({x + w, y, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({x, y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({corners[0].x, corners[0].y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({corners[1].x, corners[1].y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({corners[3].x, corners[3].y, cr, cg, cb});
         
-        s_Instance->QuadBuffer.push_back({x, y + h, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({x + w, y + h, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({x + w, y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({corners[1].x, corners[1].y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({corners[2].x, corners[2].y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({corners[3].x, corners[3].y, cr, cg, cb});
     }
     
     void Renderer2D::DrawCircle(const Math::Vector2& center,
@@ -517,7 +544,7 @@ namespace Nyon::Graphics
         }
         
         const float cr = color.x, cg = color.y, cb = color.z;
-        const float step = 2.0f * 3.1415926535f / static_cast<float>(segments);
+        const float step = 2.0f * PI / static_cast<float>(segments);
         
         for (int i = 0; i < segments; ++i)
         {
@@ -560,7 +587,7 @@ namespace Nyon::Graphics
         }
         
         const float cr = color.x, cg = color.y, cb = color.z;
-        const float step = 2.0f * 3.1415926535f / static_cast<float>(segments);
+        const float step = 2.0f * PI / static_cast<float>(segments);
         
         Math::Vector2 prevPoint{
             center.x + radius * std::cos(0.0f),
@@ -620,6 +647,36 @@ namespace Nyon::Graphics
                                      const Math::Vector3& color)
     {
         if (!s_Instance || !s_Instance->Initialized || vertices.size() < 3) return;
+        
+#ifndef NDEBUG
+        // Validate convexity - DrawSolidPolygon requires a convex polygon
+        auto isConvex = [](const std::vector<Math::Vector2>& verts) -> bool {
+            if (verts.size() < 3) return false;
+            
+            int sign = 0;
+            for (size_t i = 0; i < verts.size(); ++i)
+            {
+                const Math::Vector2& p1 = verts[i];
+                const Math::Vector2& p2 = verts[(i + 1) % verts.size()];
+                const Math::Vector2& p3 = verts[(i + 2) % verts.size()];
+                
+                Math::Vector2 v1 = p2 - p1;
+                Math::Vector2 v2 = p3 - p2;
+                float cross = v1.x * v2.y - v1.y * v2.x;
+                
+                if (cross != 0.0f)
+                {
+                    if (sign == 0)
+                        sign = (cross > 0.0f) ? 1 : -1;
+                    else if ((cross > 0.0f ? 1 : -1) != sign)
+                        return false;
+                }
+            }
+            return true;
+        };
+        
+        assert(isConvex(vertices) && "DrawSolidPolygon requires a convex polygon");
+#endif
         
         const uint32_t neededVertices = static_cast<uint32_t>((vertices.size() - 2) * 3);
         if (s_Instance->QuadBuffer.size() + neededVertices > s_Instance->MaxVertices)
@@ -855,14 +912,15 @@ namespace Nyon::Graphics
             s_Instance->QuadBuffer.push_back({point1.x, point1.y, cr, cg, cb});
         }
         
-        // Draw rectangular body as two triangles
+        // Draw rectangular body as two triangles with correct CCW winding
         Math::Vector2 side1 = tangent * radius;
         Math::Vector2 side2 = -tangent * radius;
         
-        std::vector<Math::Vector2> bodyVerts = {
-            center1 + side1, center1 + side2,
-            center2 + side1, center2 + side2
-        };
+        // Vertices in CCW order: top-left, top-right, bottom-right, bottom-left
+        Math::Vector2 v0 = center1 + side1;  // top-left
+        Math::Vector2 v1 = center2 + side1;  // top-right
+        Math::Vector2 v2 = center2 + side2;  // bottom-right
+        Math::Vector2 v3 = center1 + side2;  // bottom-left
         
         if (s_Instance->QuadBuffer.size() + 6 > s_Instance->MaxVertices)
         {
@@ -872,13 +930,15 @@ namespace Nyon::Graphics
                 s_Instance->QuadBuffer.clear();
         }
         
-        s_Instance->QuadBuffer.push_back({bodyVerts[0].x, bodyVerts[0].y, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({bodyVerts[2].x, bodyVerts[2].y, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({bodyVerts[1].x, bodyVerts[1].y, cr, cg, cb});
+        // Triangle 1: v0, v1, v2 (top-left, top-right, bottom-right)
+        s_Instance->QuadBuffer.push_back({v0.x, v0.y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({v1.x, v1.y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({v2.x, v2.y, cr, cg, cb});
         
-        s_Instance->QuadBuffer.push_back({bodyVerts[0].x, bodyVerts[0].y, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({bodyVerts[3].x, bodyVerts[3].y, cr, cg, cb});
-        s_Instance->QuadBuffer.push_back({bodyVerts[2].x, bodyVerts[2].y, cr, cg, cb});
+        // Triangle 2: v0, v2, v3 (top-left, bottom-right, bottom-left)
+        s_Instance->QuadBuffer.push_back({v0.x, v0.y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({v2.x, v2.y, cr, cg, cb});
+        s_Instance->QuadBuffer.push_back({v3.x, v3.y, cr, cg, cb});
     }
     
     void Renderer2D::DrawSegment(const Math::Vector2& point1,
@@ -951,7 +1011,7 @@ namespace Nyon::Graphics
         if (!s_Instance || !s_Instance->Initialized) return;
         if (segments < 8) segments = 8;
         
-        const float step = 2.0f * 3.1415926535f / static_cast<float>(segments);
+        const float step = 2.0f * PI / static_cast<float>(segments);
         const float cr = color.x, cg = color.y, cb = color.z;
         
         // Draw outline
@@ -991,7 +1051,7 @@ namespace Nyon::Graphics
         if (!s_Instance || !s_Instance->Initialized) return;
         if (segments < 8) segments = 8;
         
-        const float step = 2.0f * 3.1415926535f / static_cast<float>(segments);
+        const float step = 2.0f * PI / static_cast<float>(segments);
         const float cr = color.x, cg = color.y, cb = color.z;
         
         Math::Vector2 prevPoint{
@@ -1090,6 +1150,65 @@ namespace Nyon::Graphics
         const float step = angleRange / static_cast<float>(segments);
         const float cr = color.x, cg = color.y, cb = color.z;
         
+        // Outline version: draw two radial lines + arc
+        Math::Vector2 startPoint{
+            center.x + radius * std::cos(angleStart),
+            center.y + radius * std::sin(angleStart)
+        };
+        Math::Vector2 endPoint{
+            center.x + radius * std::cos(angleEnd),
+            center.y + radius * std::sin(angleEnd)
+        };
+        
+        // Draw two radial lines
+        DrawLine(center, startPoint, color, 1.0f);
+        DrawLine(center, endPoint, color, 1.0f);
+        
+        // Draw arc
+        for (int i = 0; i < segments; ++i)
+        {
+            float angle1 = angleStart + step * static_cast<float>(i);
+            float angle2 = angleStart + step * static_cast<float>(i + 1);
+            
+            Math::Vector2 point1{
+                center.x + radius * std::cos(angle1),
+                center.y + radius * std::sin(angle1)
+            };
+            Math::Vector2 point2{
+                center.x + radius * std::cos(angle2),
+                center.y + radius * std::sin(angle2)
+            };
+            
+            if (s_Instance->LineBuffer.size() + 2 > s_Instance->MaxVertices)
+            {
+                if (s_Instance->GLAvailable)
+                    s_Instance->FlushBuffer(s_Instance->LineBuffer, GL_LINES);
+                else
+                    s_Instance->LineBuffer.clear();
+            }
+            
+            s_Instance->LineBuffer.push_back({point1.x, point1.y, cr, cg, cb});
+            s_Instance->LineBuffer.push_back({point2.x, point2.y, cr, cg, cb});
+        }
+    }
+    
+    void Renderer2D::DrawSolidSector(const Math::Vector2& center,
+                                    float radius,
+                                    float angleStart,
+                                    float angleEnd,
+                                    const Math::Vector3& color,
+                                    int segments)
+    {
+        if (!s_Instance || !s_Instance->Initialized || radius <= 0.0f) return;
+        if (segments < 8) segments = 8;
+        
+        float angleRange = angleEnd - angleStart;
+        if (std::abs(angleRange) < 0.0001f) return;
+        
+        const float step = angleRange / static_cast<float>(segments);
+        const float cr = color.x, cg = color.y, cb = color.z;
+        
+        // Filled version: triangle fan from center
         Math::Vector2 prevPoint{
             center.x + radius * std::cos(angleStart),
             center.y + radius * std::sin(angleStart)
@@ -1117,16 +1236,6 @@ namespace Nyon::Graphics
             
             prevPoint = nextPoint;
         }
-    }
-    
-    void Renderer2D::DrawSolidSector(const Math::Vector2& center,
-                                    float radius,
-                                    float angleStart,
-                                    float angleEnd,
-                                    const Math::Vector3& color,
-                                    int segments)
-    {
-        DrawSector(center, radius, angleStart, angleEnd, color, segments);
     }
     
     void Renderer2D::DrawShape(const ShapeDescriptor& shape)

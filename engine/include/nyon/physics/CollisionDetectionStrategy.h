@@ -48,7 +48,7 @@ namespace Nyon::Physics
             
             // Check if objects are small (more prone to tunneling)
             bool isSmall = (std::min(GetApproximateSize(bodyA), GetApproximateSize(bodyB)) < SIZE_THRESHOLD);
-            
+                            
             // Check if movement distance is large relative to object size
             float maxSize = std::max(GetApproximateSize(bodyA), GetApproximateSize(bodyB));
             bool highDistanceRatio = maxSize > 0.0f && (maxDistance / maxSize) > DISTANCE_RATIO_THRESHOLD;
@@ -63,16 +63,26 @@ namespace Nyon::Physics
         }
         
         /**
-         * @brief Get approximate size of a physics body.
+         * @brief Get approximate size of a physics body based on collider geometry.
+         * 
+         * Uses the collider's AABB to estimate physical size, not mass.
+         * Returns the smallest half-extent which is used for tunneling thresholds.
          */
-        static float GetApproximateSize(const ECS::PhysicsBodyComponent& body)
+        static float GetApproximateSize(const ECS::ColliderComponent& collider, const Math::Vector2& position)
         {
-            if (body.inverseMass > 0.0f)
-            {
-                // Dynamic body - estimate based on inverse mass
-                return 1.0f / body.inverseMass;
-            }
-            return 50.0f; // Default size for static bodies
+            Math::Vector2 min, max;
+            collider.CalculateAABB(position, 0.0f, min, max);
+            Math::Vector2 extents = (max - min) * 0.5f;
+            return std::min(extents.x, extents.y); // smallest half-extent = tunnelling threshold
+        }
+        
+        /**
+         * @brief Legacy overload for backward compatibility - returns fixed default size.
+         * @deprecated Use GetApproximateSize(collider, position) instead.
+         */
+        static float GetApproximateSize(const ECS::PhysicsBodyComponent& /*body*/)
+        {
+            return 50.0f; // Default size when collider info not available
         }
         
         /**
@@ -237,11 +247,18 @@ namespace Nyon::Physics
                 // Conservative advancement
                 Math::Vector2 dPosA = endPosA - startPosA;
                 Math::Vector2 dPosB = endPosB - startPosB;
-                float approachSpeed = (dPosA - dPosB).Length();
                 
-                if (approachSpeed < 1e-6f)
+                // Compute the separation axis (normalized line from posA to posB)
+                Math::Vector2 separationDir = posB - posA;
+                float sepLen = separationDir.Length();
+                if (sepLen < 1e-6f) break; // Bodies at same position
+                separationDir = separationDir * (1.0f / sepLen);
+                
+                // Approach speed is the component of relative velocity along the separation direction
+                float approachSpeed = Math::Vector2::Dot(dPosB - dPosA, separationDir);
+                if (approachSpeed <= 0.0f)
                 {
-                    break; // No relative motion
+                    break; // Bodies diverging or moving parallel
                 }
                 
                 float delta = separation / approachSpeed;

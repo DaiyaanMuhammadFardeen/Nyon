@@ -2,6 +2,13 @@
 #include "nyon/graphics/Renderer2D.h"
 #include <iostream>
 
+// Debug logging macro - only output in debug builds
+#ifdef _DEBUG
+#define NYON_DEBUG_LOG(x) std::cerr << x << std::endl
+#else
+#define NYON_DEBUG_LOG(x)
+#endif
+
 namespace Nyon
 {
     Application* Application::s_Instance = nullptr;
@@ -10,14 +17,18 @@ namespace Nyon
         : m_Window(nullptr), m_Running(true), m_LastFrameTime(0.0f), 
           m_Title(title), m_Width(width), m_Height(height)
     {
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Application constructor called" << std::endl;
+#endif
         s_Instance = this;
         Init();
     }
 
     Application::~Application()
     {
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Application destructor called" << std::endl;
+#endif
         
         // Shutdown Renderer2D
         Graphics::Renderer2D::Shutdown();
@@ -28,7 +39,9 @@ namespace Nyon
 
     void Application::Init()
     {
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Application::Init() called" << std::endl;
+#endif
         if (!glfwInit())
         {
             std::cerr << "Failed to initialize GLFW!" << std::endl;
@@ -47,7 +60,9 @@ namespace Nyon
             return;
         }
 
-        std::cerr << "[DEBUG] GLFW window created successfully, pointer: " << m_Window << std::endl;
+#ifdef _DEBUG
+        std::cerr << "[DEBUG] GLFW window created successfully" << std::endl;
+#endif
 
         glfwMakeContextCurrent(m_Window);
 
@@ -64,19 +79,25 @@ namespace Nyon
         // Initialize Renderer2D with OpenGL context
         Graphics::Renderer2D::Init();
 
-        std::cout << "Nyon Engine initialized successfully!" << std::endl;
+#ifdef _DEBUG
+        std::cerr << "Nyon Engine initialized successfully!" << std::endl;
+#endif
     }
 
     void Application::Run()
     {
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Application::Run() called" << std::endl;
+#endif
         
         // Call OnStart once before the main loop
         OnStart();
         
         m_CurrentTime = glfwGetTime();
         m_Accumulator = 0.0;
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Initial current time: " << m_CurrentTime << std::endl;
+#endif
 
         while (!glfwWindowShouldClose(m_Window) && m_Running)
         {
@@ -114,7 +135,9 @@ namespace Nyon
             glfwSwapBuffers(m_Window);
             glfwPollEvents();
         }
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Application::Run() ended" << std::endl;
+#endif
     }
 
     void Application::ProcessInput()
@@ -125,7 +148,9 @@ namespace Nyon
 
     void Application::Close()
     {
+#ifdef _DEBUG
         std::cerr << "[DEBUG] Application::Close() called" << std::endl;
+#endif
         m_Running = false;
     }
 }

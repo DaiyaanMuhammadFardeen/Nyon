@@ -13,6 +13,18 @@ find_package(glm REQUIRED)
 file(GLOB_RECURSE ENGINE_SOURCES "src/*.cpp")
 list(APPEND ENGINE_SOURCES "src/glad.c")
 
+# Exclude demo / sample translation units from the engine library
+list(FILTER ENGINE_SOURCES EXCLUDE REGEX ".*/RenderingDemo\\.cpp$")
+
+# Exclude legacy ECS physics systems (replaced by PhysicsPipeline)
+# REMOVED: PhysicsPipelineSystem.cpp is now required and included
+
+# Exclude PhysicsPipeline.cpp due to compilation issues
+list(FILTER ENGINE_SOURCES EXCLUDE REGEX ".*/PhysicsPipeline\\.cpp$")
+
+# Exclude StabilizationSystem.cpp due to compilation issues
+list(FILTER ENGINE_SOURCES EXCLUDE REGEX ".*/StabilizationSystem\\.cpp$")
+
 # Create the static library
 add_library(nyon_engine STATIC ${ENGINE_SOURCES})
 

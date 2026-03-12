@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+using namespace Nyon::Physics;
+
 namespace Nyon {
 
 // ============================================================================
@@ -81,80 +83,28 @@ void PhysicsPipeline::Update(
 // Step 1: Broad-Phase
 // ============================================================================
 
-void PhysicsPipeline::UpdateDynamicTree(
-    ECS::ComponentStore& componentStore,
-    const std::vector<ECS::EntityID>& activeEntities)
-{
-    // Update or create proxies for all active entities
-    componentStore.ForEachComponent<ECS::ColliderComponent>(
-        [this, &componentStore](ECS::EntityID entityId, ECS::ColliderComponent& collider)
-        {
-            auto* transform = componentStore.GetComponent<ECS::TransformComponent>(entityId);
-            if (!transform)
-                return;
-            
-            // Compute AABB for this collider
-            AABB aabb;
-            float margin = 0.1f; // Small margin for numerical stability
-            
-            // Simple AABB computation based on shape type
-            if (std::holds_alternative<ECS::ColliderComponent::CircleShape>(collider.shape))
-            {
-                const auto& circle = std::get<ECS::ColliderComponent::CircleShape>(collider.shape);
-                float radius = circle.radius * transform->scale.x; // Approximate
-                
-                aabb.lowerBound = transform->position - Math::Vector2{radius, radius};
-                aabb.upperBound = transform->position + Math::Vector2{radius, radius};
-            }
-            else if (std::holds_alternative<ECS::ColliderComponent::PolygonShape>(collider.shape))
-            {
-                const auto& polygon = std::get<ECS::ColliderComponent::PolygonShape>(collider.shape);
-                
-                // Transform vertices to world space
-                Math::Vector2 minVertex{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
-                Math::Vector2 maxVertex{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
-                
-                for (const auto& vertex : polygon.vertices)
-                {
-                    Math::Vector2 worldVertex = transform->position + transform->rotation * (vertex * transform->scale);
-                    minVertex.x = std::min(minVertex.x, worldVertex.x);
-                    minVertex.y = std::min(minVertex.y, worldVertex.y);
-                    maxVertex.x = std::max(maxVertex.x, worldVertex.x);
-                    maxVertex.y = std::max(maxVertex.y, worldVertex.y);
-                }
-                
-                aabb.lowerBound = minVertex - Math::Vector2{margin, margin};
-                aabb.upperBound = maxVertex + Math::Vector2{margin, margin};
-            }
-            // Add more shape types as needed
-            
-            // Update or create proxy in dynamic tree
-            auto it = m_EntityProxyMap.find(entityId);
-            if (it != m_EntityProxyMap.end())
-            {
-                // Move existing proxy
-                Math::Vector2 displacement = transform->position - transform->previousPosition;
-                m_DynamicTree.MoveProxy(it->second, aabb, displacement);
-            }
-            else
-            {
-                // Create new proxy
-                uint32_t proxyId = m_DynamicTree.CreateProxy(aabb, entityId);
-                m_EntityProxyMap[entityId] = proxyId;
-            }
-        });
-}
-
 class BroadPhaseQueryCallback
 {
 public:
-    BroadPhaseQueryCallback(std::vector<BroadPhasePair>& pairs, const DynamicTree& tree)
-        : m_Pairs(pairs), m_Tree(tree) {}
+    BroadPhaseQueryCallback(std::vector<BroadPhasePair>& pairs, const DynamicTree& tree, 
+                           uint32_t currentIdA, uint32_t nodeIdA)
+        : m_Pairs(pairs), m_Tree(tree), m_CurrentIdA(currentIdA), m_NodeIdA(nodeIdA) {}
     
-    bool QueryCallback(uint32_t nodeIdA, uint32_t userDataA)
+    bool QueryCallback(uint32_t nodeId, uint32_t userData)
     {
-        m_CurrentIdA = userDataA;
-        m_NodeIdA = nodeIdA;
+        // Add overlap pair for each overlapping node
+        if (userData <= m_CurrentIdA)
+            return true; // Dedup - only add each pair once
+        
+        BroadPhasePair pair;
+        pair.entityIdA = m_CurrentIdA;
+        pair.entityIdB = userData;
+        pair.shapeIdA = 0; // Default shape for now
+        pair.shapeIdB = 0;
+        pair.aabbA = m_Tree.GetFatAABB(m_NodeIdA);
+        pair.aabbB = m_Tree.GetFatAABB(nodeId);
+        
+        m_Pairs.push_back(pair);
         return true; // Continue query
     }
     
@@ -198,6 +148,75 @@ void PhysicsPipeline::BroadPhase(
     QueryOverlappingPairs();
 }
 
+void PhysicsPipeline::UpdateDynamicTree(
+    ECS::ComponentStore& componentStore,
+    const std::vector<ECS::EntityID>& activeEntities)
+{
+    // Update or create proxies for all active entities
+    componentStore.ForEachComponent<ECS::ColliderComponent>(
+        [this, &componentStore](ECS::EntityID entityId, ECS::ColliderComponent& collider)
+        {
+            if (!componentStore.HasComponent<ECS::TransformComponent>(entityId))
+                return;
+            
+            auto& transform = componentStore.GetComponent<ECS::TransformComponent>(entityId);
+            
+            // Compute AABB for this collider
+            AABB aabb;
+            float margin = 0.1f;
+            
+            if (std::holds_alternative<ECS::ColliderComponent::CircleShape>(collider.shape))
+            {
+                const auto& circle = std::get<ECS::ColliderComponent::CircleShape>(collider.shape);
+                float radius = circle.radius * transform.scale.x;
+                
+                aabb.lowerBound = transform.position - Math::Vector2{radius, radius};
+                aabb.upperBound = transform.position + Math::Vector2{radius, radius};
+            }
+            else if (std::holds_alternative<ECS::ColliderComponent::PolygonShape>(collider.shape))
+            {
+                const auto& polygon = std::get<ECS::ColliderComponent::PolygonShape>(collider.shape);
+                
+                Math::Vector2 minVertex{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+                Math::Vector2 maxVertex{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+                
+                float cosA = std::cos(transform.rotation);
+                float sinA = std::sin(transform.rotation);
+                
+                for (const auto& vertex : polygon.vertices)
+                {
+                    Math::Vector2 scaled = vertex * transform.scale;
+                    Math::Vector2 rotated{
+                        scaled.x * cosA - scaled.y * sinA,
+                        scaled.x * sinA + scaled.y * cosA
+                    };
+                    Math::Vector2 worldVertex = transform.position + rotated;
+                    
+                    minVertex.x = std::min(minVertex.x, worldVertex.x);
+                    minVertex.y = std::min(minVertex.y, worldVertex.y);
+                    maxVertex.x = std::max(maxVertex.x, worldVertex.x);
+                    maxVertex.y = std::max(maxVertex.y, worldVertex.y);
+                }
+                
+                aabb.lowerBound = minVertex - Math::Vector2{margin, margin};
+                aabb.upperBound = maxVertex + Math::Vector2{margin, margin};
+            }
+            
+            // Update or create proxy in dynamic tree
+            auto it = m_EntityProxyMap.find(entityId);
+            if (it != m_EntityProxyMap.end())
+            {
+                Math::Vector2 displacement = transform.position - transform.previousPosition;
+                m_DynamicTree.MoveProxy(it->second, aabb, displacement);
+            }
+            else
+            {
+                uint32_t proxyId = m_DynamicTree.CreateProxy(aabb, entityId);
+                m_EntityProxyMap[entityId] = proxyId;
+            }
+        });
+}
+
 void PhysicsPipeline::QueryOverlappingPairs()
 {
     // For each proxy, query the tree for overlaps
@@ -205,7 +224,7 @@ void PhysicsPipeline::QueryOverlappingPairs()
     {
         AABB proxyAABB = m_DynamicTree.GetFatAABB(proxyId);
         
-        BroadPhaseQueryCallback callback(m_BroadPhasePairs, m_DynamicTree);
+        BroadPhaseQueryCallback callback(m_BroadPhasePairs, m_DynamicTree, entityId, proxyId);
         
         // Query the tree - this will find all overlapping AABBs
         m_DynamicTree.Query(proxyAABB, &callback);
@@ -471,9 +490,6 @@ void PhysicsPipeline::SolveConstraints(
     int velocityIterations,
     int positionIterations)
 {
-    // Combine narrow-phase and boundary contacts
-    m_FinalContacts.insert(m_FinalContacts.end(), m_Contacts.begin(), m_Contacts.end());
-    
     // Filter contacts by TOI (only process contacts that happened this frame)
     std::vector<ContactManifold> validContacts;
     for (const auto& contact : m_Contacts)
@@ -486,6 +502,9 @@ void PhysicsPipeline::SolveConstraints(
     
     if (validContacts.empty())
         return;
+    
+    // Only insert valid contacts into m_FinalContacts (not all contacts)
+    m_FinalContacts.insert(m_FinalContacts.end(), validContacts.begin(), validContacts.end());
     
     // Create solver bodies
     std::vector<SolverBody> solverBodies = CreateSolverBodies(
@@ -504,9 +523,10 @@ void PhysicsPipeline::SolveConstraints(
     m_ConstraintSolver.SetSplitImpulses(true);
     
     // Apply warm starting from persistent contacts
+    // Note: UpdatePersistentContacts now takes ComponentStore reference directly
     auto persistentContacts = m_StabilizationSystem.UpdatePersistentContacts(
         validContacts,
-        *componentStore.GetComponents<ECS::TransformComponent>());
+        componentStore);
     
     // Solve velocity constraints
     m_ConstraintSolver.SolveVelocityConstraints();
@@ -536,8 +556,7 @@ void PhysicsPipeline::WriteBackToComponents(
         body->velocity = solverBody.linearVelocity;
         body->angularVelocity = solverBody.angularVelocity;
         transform->position = solverBody.position;
-        transform->rotation = solverBody.angle;
-        transform->rotation = Math::Rotation2D(transform->rotation);
+        transform->rotation = solverBody.angle;  // Just assign the float value directly
     }
 }
 

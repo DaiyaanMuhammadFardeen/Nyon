@@ -10,9 +10,9 @@ namespace Nyon {
 // Persistent Contact Matching
 // ============================================================================
 
-std::vector<PersistentContact> StabilizationSystem::UpdatePersistentContacts(
-    const std::vector<ContactManifold>& currentContacts,
-    const std::vector<TransformComponent>& transforms)
+std::vector<Nyon::Physics::PersistentContact> Nyon::Physics::StabilizationSystem::UpdatePersistentContacts(
+    const std::vector<Nyon::Physics::ContactManifold>& currentContacts,
+    const std::vector<Nyon::ECS::TransformComponent>& transforms)
 {
     std::vector<PersistentContact> newPersistentContacts;
     newPersistentContacts.reserve(currentContacts.size());
@@ -33,20 +33,28 @@ std::vector<PersistentContact> StabilizationSystem::UpdatePersistentContacts(
             const TransformComponent& transformA = transforms[manifold.entityIdA];
             const TransformComponent& transformB = transforms[manifold.entityIdB];
             
-            Math::Vector2 localPointA = transformA.rotation.Inverse() * (contactPoint.position - transformA.position);
-            Math::Vector2 localPointB = transformB.rotation.Inverse() * (contactPoint.position - transformB.position);
+            // Convert rotation angle to inverse rotation (negative angle)
+            float invRotA = -transformA.rotation;
+            float invRotB = -transformB.rotation;
+            float cosInvA = std::cos(invRotA), sinInvA = std::sin(invRotA);
+            float cosInvB = std::cos(invRotB), sinInvB = std::sin(invRotB);
+            
+            Math::Vector2 dA = contactPoint.position - transformA.position;
+            Math::Vector2 dB = contactPoint.position - transformB.position;
+            
+            // Apply inverse rotation to get local space points
+            Math::Vector2 localPointA = { dA.x * cosInvA - dA.y * sinInvA, dA.x * sinInvA + dA.y * cosInvA };
+            Math::Vector2 localPointB = { dB.x * cosInvB - dB.y * sinInvB, dB.x * sinInvB + dB.y * cosInvB };
             
             // Try to find matching cached contact
             PersistentContact* cachedContact = FindMatchingContact(
-                m_PersistentContacts,
                 manifold.entityIdA,
                 manifold.entityIdB,
                 manifold.shapeIdA,
                 manifold.shapeIdB,
                 featureId,
                 localPointA,
-                localPointB,
-                localPointTolerance
+                localPointB
             );
             
             if (cachedContact && cachedContact->active)
@@ -96,18 +104,18 @@ std::vector<PersistentContact> StabilizationSystem::UpdatePersistentContacts(
     return newPersistentContacts;
 }
 
-PersistentContact* StabilizationSystem::FindMatchingContact(
-    std::vector<PersistentContact>& contacts,
+Nyon::Physics::PersistentContact* Nyon::Physics::StabilizationSystem::FindMatchingContact(
     uint32_t entityIdA,
     uint32_t entityIdB,
     uint32_t shapeIdA,
     uint32_t shapeIdB,
     uint32_t featureId,
     const Math::Vector2& localPointA,
-    const Math::Vector2& localPointB,
-    float tolerance)
+    const Math::Vector2& localPointB)
 {
-    for (auto& contact : contacts)
+    const float tolerance = 0.01f; // Small tolerance for floating point errors
+    
+    for (auto& contact : m_PersistentContacts)
     {
         if (!contact.active)
             continue;
@@ -136,19 +144,29 @@ PersistentContact* StabilizationSystem::FindMatchingContact(
     return nullptr;
 }
 
-uint32_t StabilizationSystem::ComputeFeatureId(
-    const ContactPoint& contactPoint,
+uint32_t Nyon::Physics::StabilizationSystem::ComputeFeatureId(
+    const Nyon::Physics::ContactPoint& contactPoint,
     const Math::Vector2& normal)
 {
-    // Quantize normal to reduce sensitivity to small angle changes
+    // Quantize normal and position to reduce sensitivity to small changes
     const float quantizationFactor = 10.0f;
-    int32_t quantizedX = static_cast<int32_t>(std::round(normal.x * quantizationFactor));
-    int32_t quantizedY = static_cast<int32_t>(std::round(normal.y * quantizationFactor));
+    auto qi = [quantizationFactor](float v) { 
+        return static_cast<int32_t>(std::round(v * quantizationFactor)); 
+    };
     
-    // Combine with contact position for unique feature identification
+    // Combine normal and position components into hash using MurmurHash-style mixing
     uint32_t hash = 0;
-    hash ^= static_cast<uint32_t>(quantizedX) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-    hash ^= static_cast<uint32_t>(quantizedY) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    auto mix = [&](uint32_t v) {
+        hash ^= v + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    };
+    
+    // Mix in quantized normal components
+    mix(static_cast<uint32_t>(qi(normal.x)));
+    mix(static_cast<uint32_t>(qi(normal.y)));
+    
+    // Mix in quantized contact position components
+    mix(static_cast<uint32_t>(qi(contactPoint.position.x)));
+    mix(static_cast<uint32_t>(qi(contactPoint.position.y)));
     
     return hash;
 }
@@ -157,42 +175,40 @@ uint32_t StabilizationSystem::ComputeFeatureId(
 // Warm Starting
 // ============================================================================
 
-void StabilizationSystem::ApplyWarmStarting(
-    const std::vector<PersistentContact>& persistentContacts,
-    const std::vector<SolverBody>& solverBodies,
-    std::vector<VelocityConstraint>& velocityConstraints,
-    float dtRatio)
+void Nyon::Physics::StabilizationSystem::ApplyWarmStarting(
+    const std::vector<Nyon::Physics::PersistentContact>& persistentContacts,
+    std::vector<Nyon::Physics::SolverBody>& solverBodies,  // Non-const to allow mutation
+    std::vector<Nyon::Physics::VelocityConstraint>& velocityConstraints)
 {
-    // dtRatio accounts for changes in time step between frames
-    const float warmStartScaling = 0.9f; // Slightly reduce cached impulses for stability
+    // Scale only by dtRatio (which is 1.0 for constant timestep)
+    // Do NOT apply constant decay factor - that would exponentially decay impulses to zero
     
     for (auto& vc : velocityConstraints)
     {
-        // Find matching persistent contacts
+        // Find matching persistent contacts by entity ID (not index!)
         for (const auto& pc : persistentContacts)
         {
-            if ((pc.entityIdA == vc.indexA && pc.entityIdB == vc.indexB) ||
-                (pc.entityIdA == vc.indexB && pc.entityIdB == vc.indexA))
+            if ((pc.entityIdA == vc.entityIdA && pc.entityIdB == vc.entityIdB) ||
+                (pc.entityIdA == vc.entityIdB && pc.entityIdB == vc.entityIdA))
             {
-                bool swapped = (pc.entityIdA == vc.indexB);
+                bool swapped = (pc.entityIdA == vc.entityIdB);
                 
                 for (auto& vcp : vc.points)
                 {
-                    // Apply cached normal impulse
-                    float scaledNormalImpulse = pc.normalImpulse * warmStartScaling * dtRatio;
-                    vcp.normalImpulse = scaledNormalImpulse;
+                    // Apply cached normal impulse - scale only by dtRatio
+                    // Note: dtRatio parameter removed, assuming constant timestep (dtRatio=1.0)
+                    vcp.normalImpulse = pc.normalImpulse; // No scaling
                     
-                    // Apply cached tangent impulse (friction)
-                    float scaledTangentImpulse = pc.tangentImpulse * warmStartScaling * dtRatio;
-                    vcp.tangentImpulse = scaledTangentImpulse;
+                    // Apply cached tangent impulse (friction) - no scaling
+                    vcp.tangentImpulse = pc.tangentImpulse; // No scaling
                     
                     // Apply impulses to bodies for immediate effect
-                    if (vc.indexA != kInvalidBodyIndex)
+                    if (vc.indexA != UINT32_MAX)
                     {
                         const float invMassA = solverBodies[vc.indexA].invMass;
                         const float invInertiaA = solverBodies[vc.indexA].invInertia;
                         
-                        Math::Vector2 P = vc.normal * scaledNormalImpulse + vc.tangent * scaledTangentImpulse;
+                        Math::Vector2 P = vc.normal * vcp.normalImpulse + vc.tangent * vcp.tangentImpulse;
                         solverBodies[vc.indexA].linearVelocity += P * invMassA;
                         
                         if (swapped)
@@ -201,12 +217,12 @@ void StabilizationSystem::ApplyWarmStarting(
                             solverBodies[vc.indexA].angularVelocity += Math::Vector2::Cross(vcp.rA, P) * invInertiaA;
                     }
                     
-                    if (vc.indexB != kInvalidBodyIndex)
+                    if (vc.indexB != UINT32_MAX)
                     {
                         const float invMassB = solverBodies[vc.indexB].invMass;
                         const float invInertiaB = solverBodies[vc.indexB].invInertia;
                         
-                        Math::Vector2 P = -(vc.normal * scaledNormalImpulse + vc.tangent * scaledTangentImpulse);
+                        Math::Vector2 P = -(vc.normal * vcp.normalImpulse + vc.tangent * vcp.tangentImpulse);
                         solverBodies[vc.indexB].linearVelocity += P * invMassB;
                         
                         if (swapped)
@@ -226,7 +242,7 @@ void StabilizationSystem::ApplyWarmStarting(
 // Speculative Contacts
 // ============================================================================
 
-float StabilizationSystem::ComputeSpeculativeDistance(
+float Nyon::Physics::StabilizationSystem::ComputeSpeculativeDistance(
     const Math::Vector2& relativeVelocity,
     float minExtent,
     float baseSpeculativeDistance)
@@ -245,7 +261,7 @@ float StabilizationSystem::ComputeSpeculativeDistance(
     return baseSpeculativeDistance + velocityMargin + extentMargin;
 }
 
-float StabilizationSystem::ComputeSpeculativeDistance(
+float Nyon::Physics::StabilizationSystem::ComputeSpeculativeDistance(
     const Math::Vector2& velocityA,
     const Math::Vector2& velocityB,
     float angularVelocityA,
@@ -276,7 +292,7 @@ float StabilizationSystem::ComputeSpeculativeDistance(
 // Sleep Management
 // ============================================================================
 
-void SleepManager::UpdateSleepTime(
+void Nyon::Physics::SleepManager::UpdateSleepTime(
     uint32_t bodyIndex,
     float linearVelocity,
     float angularVelocity,
@@ -311,7 +327,7 @@ void SleepManager::UpdateSleepTime(
     }
 }
 
-bool SleepManager::ShouldSleep(uint32_t bodyIndex) const
+bool Nyon::Physics::SleepManager::ShouldSleep(uint32_t bodyIndex) const
 {
     if (bodyIndex >= bodySleepTime.size())
         return false;
@@ -319,7 +335,7 @@ bool SleepManager::ShouldSleep(uint32_t bodyIndex) const
     return bodySleepTime[bodyIndex] >= timeToSleep;
 }
 
-void SleepManager::WakeBody(uint32_t bodyIndex)
+void Nyon::Physics::SleepManager::WakeBody(uint32_t bodyIndex)
 {
     if (bodyIndex < bodySleepTime.size())
     {
@@ -327,7 +343,7 @@ void SleepManager::WakeBody(uint32_t bodyIndex)
     }
 }
 
-void SleepManager::Clear()
+void Nyon::Physics::SleepManager::Clear()
 {
     std::fill(bodySleepTime.begin(), bodySleepTime.end(), 0.0f);
 }
@@ -336,9 +352,9 @@ void SleepManager::Clear()
 // Impulse Caching
 // ============================================================================
 
-void StabilizationSystem::CacheImpulses(
-    const std::vector<VelocityConstraint>& velocityConstraints,
-    std::vector<PersistentContact>& persistentContacts)
+void Nyon::Physics::StabilizationSystem::CacheImpulses(
+    const std::vector<Nyon::Physics::VelocityConstraint>& velocityConstraints,
+    std::vector<Nyon::Physics::PersistentContact>& persistentContacts)
 {
     // Update cached impulses in persistent contacts from solved velocity constraints
     for (const auto& vc : velocityConstraints)
@@ -365,9 +381,9 @@ void StabilizationSystem::CacheImpulses(
 // Split Impulse Application
 // ============================================================================
 
-void StabilizationSystem::ApplySplitImpulses(
-    const std::vector<PositionConstraint>& positionConstraints,
-    std::vector<SolverBody>& solverBodies,
+void Nyon::Physics::StabilizationSystem::ApplySplitImpulses(
+    const std::vector<Nyon::Physics::PositionConstraint>& positionConstraints,
+    std::vector<Nyon::Physics::SolverBody>& solverBodies,
     float baumgarteBeta,
     float baumgarteSlop)
 {
@@ -378,36 +394,39 @@ void StabilizationSystem::ApplySplitImpulses(
     
     for (const auto& pc : positionConstraints)
     {
-        float C = std::max(pc.separation + baumgarteSlop, 0.0f);
-        float positionImpulse = -baumgarteBeta * C;
+        // separation < 0 means penetration. Correct when separation < -slop.
+        float C = std::min(pc.separation + baumgarteSlop, 0.0f); // <= 0 when penetrating
+        float positionImpulse = -baumgarteBeta * C; // now positive = push apart
         
-        // Clamp position correction
-        positionImpulse = std::clamp(positionImpulse, -maxPositionCorrection, maxPositionCorrection);
+        // Clamp position correction to positive range
+        positionImpulse = std::clamp(positionImpulse, 0.0f, maxPositionCorrection);
         
-        Math::Vector2 P = pc.normal * positionImpulse;
+        Math::Vector2 P = pc.localNormal * positionImpulse;
         
-        if (pc.indexA != kInvalidBodyIndex)
+        if (pc.indexA != UINT32_MAX)
         {
             float invMassA = solverBodies[pc.indexA].invMass;
             float invInertiaA = solverBodies[pc.indexA].invInertia;
             
-            solverBodies[pc.indexA].position += P * invMassA;
-            solverBodies[pc.indexA].angle -= Math::Vector2::Cross(pc.rA, P) * invInertiaA;
+            // Body A moves in -normal direction (pushed back)
+            solverBodies[pc.indexA].position -= P * invMassA;
+            solverBodies[pc.indexA].angle -= Math::Vector2::Cross(pc.localPointA, P) * invInertiaA;
             
             // Update transform immediately
-            solverBodies[pc.indexA].rotation = Math::Rotation2D(solverBodies[pc.indexA].angle);
+            // Removed: solverBodies[pc.indexA].rotation = Math::Rotation2D(solverBodies[pc.indexA].angle);
         }
         
-        if (pc.indexB != kInvalidBodyIndex)
+        if (pc.indexB != UINT32_MAX)
         {
             float invMassB = solverBodies[pc.indexB].invMass;
             float invInertiaB = solverBodies[pc.indexB].invInertia;
             
-            solverBodies[pc.indexB].position -= P * invMassB;
-            solverBodies[pc.indexB].angle += Math::Vector2::Cross(pc.rB, P) * invInertiaB;
+            // Body B moves in +normal direction (pushed forward)
+            solverBodies[pc.indexB].position += P * invMassB;
+            solverBodies[pc.indexB].angle += Math::Vector2::Cross(pc.localPointB, P) * invInertiaB;
             
             // Update transform immediately
-            solverBodies[pc.indexB].rotation = Math::Rotation2D(solverBodies[pc.indexB].angle);
+            // Removed: solverBodies[pc.indexB].rotation = Math::Rotation2D(solverBodies[pc.indexB].angle);
         }
     }
 }

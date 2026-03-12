@@ -69,17 +69,19 @@ namespace Nyon::ECS
             if (!body.ShouldCollide())
                 continue;
             
-            // Get position from TransformComponent
+            // Get position and rotation from TransformComponent
             Math::Vector2 position = {0.0f, 0.0f};
+            float rotation = 0.0f;
             if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
             {
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
                 position = transform.position;
+                rotation = transform.rotation;
             }
             
-            // Update shape AABB in broad phase
+            // Update shape AABB in broad phase with rotation
             // Use entityId as unique identifier since each entity has one shape
-            UpdateShapeAABB(entityId, entityId, const_cast<ColliderComponent*>(&collider), position);
+            UpdateShapeAABB(entityId, entityId, const_cast<ColliderComponent*>(&collider), position, rotation);
         }
         
         // Handle moved proxies
@@ -123,7 +125,7 @@ namespace Nyon::ECS
                 
             // Get current AABB
             Math::Vector2 min, max;
-            colliderA.CalculateAABB(positionA, min, max);
+            colliderA.CalculateAABB(positionA, 0.0f, min, max);
             Physics::AABB queryAABB(min, max);
             
             // Query broad phase
@@ -294,12 +296,19 @@ namespace Nyon::ECS
     
     void CollisionPipelineSystem::UpdateShapeAABB(uint32_t entityId, uint32_t shapeId,
                                                 ColliderComponent* collider,
-                                                const Math::Vector2& position)
+                                                const Math::Vector2& position,
+                                                float rotation)
     {
-        // Calculate new AABB
+        // Calculate new AABB accounting for rotation
         Math::Vector2 min, max;
-        collider->CalculateAABB(position, min, max);
-        Physics::AABB newAABB(min, max);
+        collider->CalculateAABB(position, rotation, min, max);
+        
+        // Add fat AABB margin for numerical stability
+        const float margin = 0.1f;
+        Physics::AABB newAABB(
+            min - Math::Vector2{margin, margin},
+            max + Math::Vector2{margin, margin}
+        );
         
         // Use entityId as unique shape identifier to avoid collisions
         auto proxyIt = m_ShapeProxyMap.find(shapeId);
@@ -344,8 +353,10 @@ namespace Nyon::ECS
             return true; // Skip this pair due to filtering
         }
             
-        // Create contact pair
-        ContactPair pair{entityId, otherEntityId, shapeId, otherEntityId};
+        // Create contact pair with proper shape IDs
+        // Currently each entity has one shape, so shapeId == entityId
+        // In the future when multi-shape support is added, this will need to be updated
+        ContactPair pair{entityId, otherEntityId, shapeId, otherEntityId};  // shapeIdB = otherEntityId (single shape per entity)
         system->m_ActivePairs.push_back(pair);
         
         return true; // Continue querying

@@ -29,6 +29,7 @@ namespace Nyon::ECS
     public:
         void Update(float deltaTime) override;
         void Initialize(EntityManager& entityManager, ComponentStore& componentStore) override;
+        virtual ~PhysicsPipelineSystem() = default;
         
         // Pipeline configuration
         struct Config
@@ -103,7 +104,8 @@ namespace Nyon::ECS
             uint32_t indexA;                                // Body A index
             uint32_t indexB;                                // Body B index
             float invMassA, invMassB;                       // Inverse masses
-            float localCenterA, localCenterB;               // Local centers of mass
+            Math::Vector2 localCenterA;                     // Local center of mass for body A
+            Math::Vector2 localCenterB;                     // Local center of mass for body B
             float invIA, invIB;                             // Inverse inertias
             int pointCount;                                 // Number of contact points
         };

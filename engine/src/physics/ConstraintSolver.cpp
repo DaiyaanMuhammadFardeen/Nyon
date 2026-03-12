@@ -69,8 +69,8 @@ namespace Nyon::Physics
             vc.normal = manifold.normal;
             vc.tangent = {-manifold.normal.y, manifold.normal.x};  // Perpendicular
             vc.contactIndex = static_cast<int>(i);
-            vc.friction = 0.3f;  // Default friction
-            vc.restitution = 0.0f;  // Default restitution
+            vc.friction = 0.3f;  // Default friction coefficient
+            vc.restitution = 0.0f;  // Default restitution (no bounce)
             vc.tangentSpeed = 0.0f;
             
             // Create velocity constraint points
@@ -82,8 +82,11 @@ namespace Nyon::Physics
                 vcp.normalImpulse = 0.0f;
                 vcp.tangentImpulse = 0.0f;
                 vcp.totalNormalImpulse = 0.0f;
-                vcp.bias = 0.0f;
                 vcp.maxFriction = 0.0f;
+                
+                // Compute Baumgarte bias once during initialization (not every solver iteration)
+                float C = std::max(cp.separation + m_BaumgarteSlop, 0.0f);
+                vcp.bias = -m_BaumgarteBeta * C / m_TimeStep;
                 
                 vc.points.push_back(vcp);
             }
@@ -171,12 +174,16 @@ namespace Nyon::Physics
             // Normal velocity
             float vn = Math::Vector2::Dot(relativeVelocity, vc.normal);
             
-            // Apply position correction bias (Baumgarte stabilization)
-            float C = std::max(vcp.separation + m_BaumgarteSlop, 0.0f);
-            vcp.bias = -m_BaumgarteBeta * C / m_TimeStep;
+            // Add restitution bias for bouncing (only if approaching)
+            // Baumgarte bias is already computed in InitializeVelocityConstraints
+            float bias = vcp.bias;
+            if (vc.restitution > 0.0f && vn < 0.0f)
+            {
+                bias -= vc.restitution * vn;  // Add bounce velocity
+            }
             
             // Compute normal impulse
-            float lambda = -vcp.normalMass * (vn + vcp.bias);
+            float lambda = -vcp.normalMass * (vn + bias);
             
             // Clamp accumulated impulse
             float newImpulse = std::max(vcp.normalImpulse + lambda, 0.0f);
@@ -204,8 +211,8 @@ namespace Nyon::Physics
             // Compute friction impulse
             lambda = -vcp.tangentMass * vt;
             
-            // Coulomb friction clamp
-            vcp.maxFriction = 0.3f * vcp.totalNormalImpulse;  // mu * normal force
+            // Coulomb friction clamp using vc.friction from manifold
+            vcp.maxFriction = vc.friction * vcp.totalNormalImpulse;  // mu * normal force
             float maxTangentImpulse = vcp.maxFriction * m_TimeStep;
             
             float oldTangentImpulse = vcp.tangentImpulse;

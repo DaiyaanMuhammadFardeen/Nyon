@@ -168,9 +168,12 @@ namespace Nyon::Physics
         
         if (otherType == 0)  // Circle
         {
-            const auto* circleData = static_cast<const struct { Math::Vector2 center; float radius; }*>(otherData);
+            // Data is packed as: Vector2 center, float radius
+            const float* floatData = reinterpret_cast<const float*>(otherData);
+            Math::Vector2 otherCenter = *reinterpret_cast<const Math::Vector2*>(floatData);
+            float otherRadius = floatData[2];
             result = CircleCircleCCD(capCenter, capRadius, velocity, 
-                                    circleData->center, circleData->radius, otherVelocity, dt);
+                                    otherCenter, otherRadius, otherVelocity, dt);
         }
         else
         {

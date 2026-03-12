@@ -1,36 +1,18 @@
 cmake_minimum_required(VERSION 3.10)
-project(PhysicsDemoGame)
+project(NyonPhysicsDemo)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find required packages
-find_package(OpenGL REQUIRED)
-find_package(glfw3 REQUIRED)
-find_package(glm REQUIRED)
-
-# Create executable
-add_executable(physics_demo_game 
+add_executable(nyon_physics_demo
     src/main.cpp
     src/PhysicsDemoGame.cpp
 )
 
-# Include directories
-target_include_directories(physics_demo_game PRIVATE 
-    include
-    ../../engine/include
+target_include_directories(nyon_physics_demo PRIVATE
+    ${CMAKE_SOURCE_DIR}/engine/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Link with engine library and dependencies
-target_link_libraries(physics_demo_game 
-    nyon_engine
-    OpenGL::GL 
-    glfw 
-    glm
-)
+target_link_libraries(nyon_physics_demo PRIVATE nyon_engine)
 
-# Copy shaders if they exist
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/src/graphics/shaders")
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/src/graphics/shaders" 
-         DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
-endif()

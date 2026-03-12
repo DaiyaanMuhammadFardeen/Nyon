@@ -26,8 +26,8 @@ namespace Nyon::ECS
         // === MASS PROPERTIES ===
         float mass = 1.0f;                          // Mass of the body (0 = infinite mass/static)
         float inverseMass = 1.0f;                   // 1/mass (cached for performance)
-        float inertia = 1.0f;                       // Moment of inertia
-        float inverseInertia = 1.0f;                // 1/inertia (cached for performance)
+        float inertia = 0.0f;                       // Moment of inertia (default to 0, set from shape)
+        float inverseInertia = 0.0f;                // 1/inertia (cached for performance)
         Math::Vector2 centerOfMass = {0.0f, 0.0f};  // Local center of mass
         
         // === MATERIAL PROPERTIES ===
@@ -51,9 +51,9 @@ namespace Nyon::ECS
         bool isAwake = true;                        // Active simulation state
         bool allowSleep = true;                     // Whether body can fall asleep
         float sleepTimer = 0.0f;                    // Time accumulated while stationary
-        static constexpr float SLEEP_THRESHOLD = 0.5f; // Seconds of inactivity to sleep
-        static constexpr float LINEAR_SLEEP_TOLERANCE = 0.01f; // Velocity threshold for sleep
-        static constexpr float ANGULAR_SLEEP_TOLERANCE = 0.01f; // Angular vel threshold for sleep
+        static constexpr float TIME_TO_SLEEP = 0.5f;           // Seconds of inactivity to sleep
+        static constexpr float LINEAR_SLEEP_TOLERANCE = 0.01f; // Velocity threshold for sleep (pixels/sec)
+        static constexpr float ANGULAR_SLEEP_TOLERANCE = 0.01f; // Angular vel threshold for sleep (rad/sec)
         
         // === BACKWARD COMPATIBILITY ===
         bool isGrounded = false;                    // Legacy grounded state
@@ -86,7 +86,7 @@ namespace Nyon::ECS
             // Static and kinematic bodies have infinite mass in the solver
             if (isStatic || isKinematic || mass <= 0.0f)
             {
-                mass = 0.0f;
+                // Preserve mass value for when body becomes dynamic again
                 inverseMass = 0.0f;
                 inertia = 0.0f;
                 inverseInertia = 0.0f;
@@ -94,7 +94,7 @@ namespace Nyon::ECS
             else
             {
                 inverseMass = 1.0f / mass;
-                // inertia is expected to be set from shape info; keep any existing value
+                // Inertia is expected to be set from shape info; keep any existing value
                 if (inertia > 0.0f)
                 {
                     inverseInertia = 1.0f / inertia;

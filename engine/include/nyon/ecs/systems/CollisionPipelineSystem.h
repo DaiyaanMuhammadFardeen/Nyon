@@ -39,12 +39,25 @@ namespace Nyon::ECS
         
         struct ContactPairHash
         {
-            size_t operator()(const ContactPair& pair) const
+            size_t operator()(const ContactPair& pair) const noexcept
             {
-                return ((std::hash<uint32_t>{}(pair.entityIdA) * 31 + 
-                        std::hash<uint32_t>{}(pair.entityIdB)) * 31 +
-                        std::hash<uint32_t>{}(pair.shapeIdA)) * 31 +
-                        std::hash<uint32_t>{}(pair.shapeIdB);
+                // MurmurHash-inspired mixing function for better avalanche properties
+                auto mix = [](uint32_t v) -> size_t {
+                    v ^= v >> 16;
+                    v *= 0x85ebca6b;
+                    v ^= v >> 13;
+                    v *= 0xc2b2ae35;
+                    v ^= v >> 16;
+                    return static_cast<size_t>(v);
+                };
+                
+                // Combine hashes using prime multiplication and bit rotation
+                size_t seed = mix(pair.entityIdA);
+                seed ^= mix(pair.entityIdB) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+                seed ^= mix(pair.shapeIdA)  + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+                seed ^= mix(pair.shapeIdB)  + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+                
+                return seed;
             }
         };
         
@@ -68,7 +81,8 @@ namespace Nyon::ECS
         // Shape-AABB management
         void UpdateShapeAABB(uint32_t entityId, uint32_t shapeId, 
                            ColliderComponent* collider, 
-                           const Math::Vector2& position);
+                           const Math::Vector2& position,
+                           float rotation);
         
         // Component references
         ComponentStore* m_ComponentStore = nullptr;

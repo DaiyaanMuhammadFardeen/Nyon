@@ -5,6 +5,7 @@
 
 #include "nyon/physics/SATCollisionDetector.h"
 #include "nyon/physics/ConstraintSolver.h"
+#include "nyon/ecs/components/TransformComponent.h"
 #include <vector>
 #include <cstdint>
 
@@ -50,33 +51,18 @@ namespace Nyon::Physics
             bodySleepTime.resize(bodyCount, 0.0f);
         }
         
-        bool ShouldSleep(uint32_t bodyIndex, float linearVelocity, float angularVelocity) const
-        {
-            float speedSquared = linearVelocity * linearVelocity + angularVelocity * angularVelocity;
-            return speedSquared < sleepThreshold * sleepThreshold;
-        }
+        bool ShouldSleep(uint32_t bodyIndex) const;
         
-        void UpdateSleepTime(uint32_t bodyIndex, float linearVelocity, float angularVelocity, float dt)
-        {
-            if (ShouldSleep(bodyIndex, linearVelocity, angularVelocity))
-            {
-                bodySleepTime[bodyIndex] += dt;
-            }
-            else
-            {
-                bodySleepTime[bodyIndex] = 0.0f;
-            }
-        }
+        void UpdateSleepTime(uint32_t bodyIndex, float linearVelocity, float angularVelocity, float dt);
         
         bool CanSleep(uint32_t bodyIndex) const
         {
             return bodySleepTime[bodyIndex] >= timeToSleep;
         }
         
-        void WakeUp(uint32_t bodyIndex)
-        {
-            bodySleepTime[bodyIndex] = 0.0f;
-        }
+        void WakeBody(uint32_t bodyIndex);
+        
+        void Clear();
     };
     
     /**
@@ -120,12 +106,12 @@ namespace Nyon::Physics
          * Uses cached impulses to improve solver convergence.
          * 
          * @param persistentContacts Persistent contact data
-         * @param solverBodies Solver bodies
+         * @param solverBodies Non-const reference to solver bodies (will be mutated)
          * @param velocityConstraints Velocity constraints to initialize
          */
         void ApplyWarmStarting(
             const std::vector<PersistentContact>& persistentContacts,
-            const std::vector<SolverBody>& solverBodies,
+            std::vector<SolverBody>& solverBodies,  // Non-const to allow mutation
             std::vector<VelocityConstraint>& velocityConstraints);
         
         /**
@@ -177,11 +163,19 @@ namespace Nyon::Physics
          * 
          * Uses feature IDs and local points for matching.
          */
-        int FindMatchingContact(
+        PersistentContact* FindMatchingContact(
             uint32_t entityIdA,
             uint32_t entityIdB,
+            uint32_t shapeIdA,
+            uint32_t shapeIdB,
             uint32_t featureId,
-            const Math::Vector2& localPoint) const;
+            const Math::Vector2& localPointA,
+            const Math::Vector2& localPointB);
+        
+        /**
+         * @brief Compute feature ID from contact point and normal
+         */
+        static uint32_t ComputeFeatureId(const ContactPoint& cp, const Math::Vector2& normal);
         
         /**
          * @brief Create new persistent contact from manifold

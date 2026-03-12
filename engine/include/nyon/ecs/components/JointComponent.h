@@ -10,9 +10,17 @@ namespace Nyon::ECS
      * 
      * Implements various joint types inspired by Box2D for constraining body motion.
      * Supports distance, revolute, prismatic, and weld joints.
+     * 
+     * WARNING: Joint solver is NOT implemented in this engine version!
+     * This component is defined for future implementation only.
+     * Do not use - joints will have no physical effect.
      */
     struct JointComponent
     {
+        // Note: Joint solver is not implemented in this engine version.
+        // This component is defined for future implementation only.
+        // Joints will have no physical effect until solver is added.
+        
         // === JOINT TYPES ===
         enum class Type
         {
@@ -109,6 +117,9 @@ namespace Nyon::ECS
             switch (jointType)
             {
                 case Type::Distance:
+                    // WARNING: This computes local-space distance, not world-space!
+                    // Caller MUST manually set correct world-space length after construction:
+                    //   joint.distanceJoint.length = (worldPosB + anchorB - (worldPosA + anchorA)).Length();
                     distanceJoint.length = (anchorB - anchorA).Length();
                     break;
                 case Type::Revolute:

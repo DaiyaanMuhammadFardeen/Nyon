@@ -1,10 +1,9 @@
 #include "nyon/physics/ManifoldGenerator.h"
+#include "nyon/physics/SATCollisionDetector.h"
 
 #include <cmath>
 #include <limits>
 #include <algorithm>
-#include <fstream>
-#include <chrono>
 
 using namespace Nyon::ECS;
 
@@ -86,90 +85,91 @@ namespace Nyon::Physics
         }
     } // namespace
 
-    ContactManifold ManifoldGenerator::GenerateManifold(uint32_t entityIdA,
-                                                        uint32_t entityIdB,
-                                                        uint32_t shapeIdA,
-                                                        uint32_t shapeIdB,
-                                                        const ColliderComponent& colliderA,
-                                                        const ColliderComponent& colliderB,
-                                                        const TransformComponent& transformA,
-                                                        const TransformComponent& transformB)
+    ECS::ContactManifold ManifoldGenerator::GenerateManifold(uint32_t entityIdA,
+                                                             uint32_t entityIdB,
+                                                             uint32_t shapeIdA,
+                                                             uint32_t shapeIdB,
+                                                             const ColliderComponent& colliderA,
+                                                             const ColliderComponent& colliderB,
+                                                             const TransformComponent& transformA,
+                                                             const TransformComponent& transformB)
     {
-        ContactManifold manifold{};
+        ECS::ContactManifold manifold{};
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
         manifold.touching = false;
-        manifold.tangentSpeed = 0.0f;
 
-        // Compute combined material properties using Box2D-style mixing
-        // Friction uses geometric mean: sqrt(frictionA * frictionB)
-        // Restitution uses maximum: max(restitutionA, restitutionB)
-        manifold.friction = std::sqrt(colliderA.material.friction * colliderB.material.friction);
-        manifold.restitution = std::max(colliderA.material.restitution, colliderB.material.restitution);
-
-        if (colliderA.GetType() == ColliderComponent::ShapeType::Circle &&
-            colliderB.GetType() == ColliderComponent::ShapeType::Circle)
+        using ST = ColliderComponent::ShapeType;
+        ST tA = colliderA.GetType();
+        ST tB = colliderB.GetType();
+        
+        // Sort shape types to reduce duplicate collision functions
+        bool swapped = false;
+        if (static_cast<int>(tA) > static_cast<int>(tB))
         {
-            return CircleCircle(entityIdA, entityIdB, shapeIdA, shapeIdB,
-                                colliderA.GetCircle(), colliderB.GetCircle(),
-                                transformA, transformB, manifold);
+            std::swap(tA, tB);
+            swapped = true;
         }
-
-        if (colliderA.GetType() == ColliderComponent::ShapeType::Circle &&
-            colliderB.GetType() == ColliderComponent::ShapeType::Polygon)
-        {
-            return CirclePolygon(entityIdA, entityIdB, shapeIdA, shapeIdB,
-                                 colliderA.GetCircle(), colliderB.GetPolygon(),
-                                 transformA, transformB, false, manifold);
-        }
-
-        if (colliderA.GetType() == ColliderComponent::ShapeType::Polygon &&
-            colliderB.GetType() == ColliderComponent::ShapeType::Circle)
-        {
-            // Flip normal so it always points from A to B.
-            return CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
-                                 colliderB.GetCircle(), colliderA.GetPolygon(),
-                                 transformB, transformA, true, manifold);
-        }
-
-        if (colliderA.GetType() == ColliderComponent::ShapeType::Polygon &&
-            colliderB.GetType() == ColliderComponent::ShapeType::Polygon)
-        {
-            return PolygonPolygon(entityIdA, entityIdB, shapeIdA, shapeIdB,
-                                  colliderA.GetPolygon(), colliderB.GetPolygon(),
-                                  transformA, transformB, manifold);
-        }
-
-        // Capsule collisions
-        if (colliderA.GetType() == ColliderComponent::ShapeType::Capsule ||
-            colliderB.GetType() == ColliderComponent::ShapeType::Capsule)
+        
+        // Check for Capsule and Segment shapes FIRST before circle/polygon pairs
+        // This prevents capsule/circle from falling into CirclePolygon by mistake
+        if (tA == ST::Capsule || tB == ST::Capsule)
         {
             return CapsuleCollision(entityIdA, entityIdB, shapeIdA, shapeIdB,
                                    colliderA, colliderB, transformA, transformB, manifold);
         }
-
-        // Segment collisions
-        if (colliderA.GetType() == ColliderComponent::ShapeType::Segment ||
-            colliderB.GetType() == ColliderComponent::ShapeType::Segment)
+        
+        if (tA == ST::Segment || tB == ST::Segment)
         {
             return SegmentCollision(entityIdA, entityIdB, shapeIdA, shapeIdB,
                                    colliderA, colliderB, transformA, transformB, manifold);
+        }
+        
+        // Dispatch to appropriate collision function based on shape type pair
+        if (tA == ST::Circle && tB == ST::Circle)
+        {
+            return CircleCircle(entityIdA, entityIdB, shapeIdA, shapeIdB,
+                               colliderA.GetCircle(), colliderB.GetCircle(),
+                               transformA, transformB, manifold);
+        }
+        
+        if (tA == ST::Circle && tB == ST::Polygon)
+        {
+            if (swapped)
+            {
+                return CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
+                                    colliderB.GetCircle(), colliderA.GetPolygon(),
+                                    transformB, transformA, true, manifold);
+            }
+            else
+            {
+                return CirclePolygon(entityIdA, entityIdB, shapeIdA, shapeIdB,
+                                    colliderA.GetCircle(), colliderB.GetPolygon(),
+                                    transformA, transformB, false, manifold);
+            }
+        }
+        
+        if (tA == ST::Polygon && tB == ST::Polygon)
+        {
+            return PolygonPolygon(entityIdA, entityIdB, shapeIdA, shapeIdB,
+                                 colliderA.GetPolygon(), colliderB.GetPolygon(),
+                                 transformA, transformB, manifold);
         }
 
         return manifold;
     }
 
-    ContactManifold ManifoldGenerator::CircleCircle(uint32_t entityIdA,
-                                                    uint32_t entityIdB,
-                                                    uint32_t shapeIdA,
-                                                    uint32_t shapeIdB,
-                                                    const ColliderComponent::CircleShape& circleA,
-                                                    const ColliderComponent::CircleShape& circleB,
-                                                    const TransformComponent& transformA,
-                                                    const TransformComponent& transformB,
-                                                    ContactManifold& manifold)
+    ECS::ContactManifold ManifoldGenerator::CircleCircle(uint32_t entityIdA,
+                                                         uint32_t entityIdB,
+                                                         uint32_t shapeIdA,
+                                                         uint32_t shapeIdB,
+                                                         const ColliderComponent::CircleShape& circleA,
+                                                         const ColliderComponent::CircleShape& circleB,
+                                                         const TransformComponent& transformA,
+                                                         const TransformComponent& transformB,
+                                                         ECS::ContactManifold& manifold)
     {
         manifold.touching = false;
 
@@ -192,8 +192,9 @@ namespace Nyon::Physics
 
         float penetration = radius - dist;
 
-        ContactPoint cp{};
-        cp.position = centerA + normal * (circleA.radius - 0.5f * penetration);
+        // Contact point is on the surface of circle A toward circle B
+        ECS::ContactPoint cp{};
+        cp.position = centerA + normal * circleA.radius;
         cp.normal = normal;
         cp.separation = -penetration;
         cp.normalImpulse = 0.0f;
@@ -205,23 +206,28 @@ namespace Nyon::Physics
 
         manifold.points.push_back(cp);
         manifold.normal = normal;
-        manifold.localNormal = {0.0f, 0.0f};
-        manifold.localPoint = {0.0f, 0.0f};
+        
+        // Store local-space data for position correction
+        Math::Vector2 invRotA = Rotate(normal, -transformA.rotation);
+        manifold.localNormal = invRotA;
+        Math::Vector2 localContact = Rotate(cp.position - transformA.position, -transformA.rotation);
+        manifold.localPoint = localContact;
+        
         manifold.touching = true;
 
         return manifold;
     }
 
-    ContactManifold ManifoldGenerator::CirclePolygon(uint32_t entityIdA,
-                                                     uint32_t entityIdB,
-                                                     uint32_t shapeIdA,
-                                                     uint32_t shapeIdB,
-                                                     const ColliderComponent::CircleShape& circle,
-                                                     const ColliderComponent::PolygonShape& polygon,
-                                                     const TransformComponent& circleTransform,
-                                                     const TransformComponent& polyTransform,
-                                                     bool flipNormal,
-                                                     ContactManifold& manifold)
+    ECS::ContactManifold ManifoldGenerator::CirclePolygon(uint32_t entityIdA,
+                                                          uint32_t entityIdB,
+                                                          uint32_t shapeIdA,
+                                                          uint32_t shapeIdB,
+                                                          const ColliderComponent::CircleShape& circle,
+                                                          const ColliderComponent::PolygonShape& polygon,
+                                                          const TransformComponent& circleTransform,
+                                                          const TransformComponent& polyTransform,
+                                                          bool flipNormal,
+                                                          ECS::ContactManifold& manifold)
     {
         manifold.touching = false;
         manifold.entityIdA = entityIdA;
@@ -273,7 +279,7 @@ namespace Nyon::Physics
         // along the opposite of the manifold normal.
         Math::Vector2 contactPoint = center - normal * (circle.radius - 0.5f * penetration);
         
-        ContactPoint cp{};
+        ECS::ContactPoint cp{};
         cp.position = contactPoint;
         cp.normal = normal;
         cp.separation = -penetration;
@@ -286,160 +292,314 @@ namespace Nyon::Physics
 
         manifold.points.push_back(cp);
         manifold.normal = normal;
-        manifold.localNormal = {0.0f, 0.0f};
-        manifold.localPoint = {0.0f, 0.0f};
+        
+        // Store local-space data for position correction
+        Math::Vector2 invRotA = Rotate(normal, -circleTransform.rotation);
+        manifold.localNormal = invRotA;
+        Math::Vector2 localContact = Rotate(contactPoint - circleTransform.position, -circleTransform.rotation);
+        manifold.localPoint = localContact;
+        
         manifold.touching = true;
 
         return manifold;
     }
 
-    ContactManifold ManifoldGenerator::PolygonPolygon(uint32_t entityIdA,
-                                                      uint32_t entityIdB,
-                                                      uint32_t shapeIdA,
-                                                      uint32_t shapeIdB,
-                                                      const ColliderComponent::PolygonShape& polyA,
-                                                      const ColliderComponent::PolygonShape& polyB,
-                                                      const TransformComponent& transformA,
-                                                      const TransformComponent& transformB,
-                                                      ContactManifold& manifold)
+    ECS::ContactManifold ManifoldGenerator::PolygonPolygon(uint32_t entityIdA,
+                                                           uint32_t entityIdB,
+                                                           uint32_t shapeIdA,
+                                                           uint32_t shapeIdB,
+                                                           const ColliderComponent::PolygonShape& polyA,
+                                                           const ColliderComponent::PolygonShape& polyB,
+                                                           const TransformComponent& transformA,
+                                                           const TransformComponent& transformB,
+                                                           ECS::ContactManifold& manifold)
     {
+        // Delegate to SATCollisionDetector for proper Sutherland-Hodgman clipping
+        // This generates up to 2 contact points for stable stacking
+        SATCollisionDetector detector;
+        Physics::ContactManifold result = detector.DetectPolygonPolygon(
+            entityIdA, entityIdB, shapeIdA, shapeIdB,
+            polyA, polyB, transformA, transformB);
+        return ConvertManifold(result);
+    }
+    
+    ECS::ContactManifold ManifoldGenerator::CircleCapsule(uint32_t entityIdA,
+                                                          uint32_t entityIdB,
+                                                          uint32_t shapeIdA,
+                                                          uint32_t shapeIdB,
+                                                          const ColliderComponent& circleCollider,
+                                                          const ColliderComponent& capsuleCollider,
+                                                          const TransformComponent& transformA,
+                                                          const TransformComponent& transformB,
+                                                          ECS::ContactManifold& manifold)
+    {
+        // Circle vs Capsule: treat capsule as line segment with radius
+        // Find closest point on capsule center line to circle center
         manifold.touching = false;
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
-
-        std::vector<Math::Vector2> vertsA, vertsB;
-        std::vector<Math::Vector2> normalsA, normalsB;
-        ComputePolygonWorld(polyA, transformA, vertsA, normalsA);
-        ComputePolygonWorld(polyB, transformB, vertsB, normalsB);
-
-        float minOverlap = std::numeric_limits<float>::infinity();
-        Math::Vector2 bestAxis = {0.0f, 0.0f};
-
-        auto testAxes = [&](const std::vector<Math::Vector2>& vertices1,
-                            const std::vector<Math::Vector2>& vertices2,
-                            const std::vector<Math::Vector2>& axes,
-                            bool flip) -> bool
-        {
-            for (const auto& axisRaw : axes)
-            {
-                Math::Vector2 axis = Normalize(axisRaw);
-                if (axis.LengthSquared() < 1e-6f)
-                    continue;
-
-                float min1, max1, min2, max2;
-                ProjectPolygon(vertices1, axis, min1, max1);
-                ProjectPolygon(vertices2, axis, min2, max2);
-
-                float overlap = std::min(max1, max2) - std::max(min1, min2);
-                if (overlap <= 0.0f)
-                {
-                    // Separating axis found – no collision.
-                    return false;
-                }
-
-                if (overlap < minOverlap)
-                {
-                    minOverlap = overlap;
-                    bestAxis = flip ? Math::Vector2{-axis.x, -axis.y} : axis;
-                }
-            }
-            return true;
+        
+        // Get circle data
+        const auto& circle = circleCollider.GetCircle();
+        Math::Vector2 circleCenter = transformA.position + circle.center;
+        
+        // Get capsule endpoints in world space
+        const auto& capsule = capsuleCollider.GetCapsule();
+        float cosB = std::cos(transformB.rotation);
+        float sinB = std::sin(transformB.rotation);
+        Math::Vector2 capStart = {
+            transformB.position.x + (capsule.center1.x * cosB - capsule.center1.y * sinB),
+            transformB.position.y + (capsule.center1.x * sinB + capsule.center1.y * cosB)
         };
-
-        if (!testAxes(vertsA, vertsB, normalsA, false))
+        Math::Vector2 capEnd = {
+            transformB.position.x + (capsule.center2.x * cosB - capsule.center2.y * sinB),
+            transformB.position.y + (capsule.center2.x * sinB + capsule.center2.y * cosB)
+        };
+        
+        // Find closest point on capsule center line to circle center
+        Math::Vector2 segDir = capEnd - capStart;
+        float segLenSq = segDir.LengthSquared();
+        float t = Dot(circleCenter - capStart, segDir) / segLenSq;
+        t = std::clamp(t, 0.0f, 1.0f);
+        Math::Vector2 closestPoint = capStart + segDir * t;
+        
+        // Distance from circle center to closest point
+        Math::Vector2 delta = circleCenter - closestPoint;
+        float dist = delta.Length();
+        float combinedRadius = circle.radius + capsule.radius;
+        
+        if (dist > combinedRadius)
             return manifold;
-        if (!testAxes(vertsB, vertsA, normalsB, true))
-            return manifold;
-
-        // Collision – build a simple manifold with a single contact point at the midpoints of support features.
-        // Find support points by projecting vertices onto the best separating axis.
-        float bestProjA = -std::numeric_limits<float>::infinity();
-        Math::Vector2 supportA;
-        for (const auto& v : vertsA)
-        {
-            float p = Dot(v, bestAxis);
-            if (p > bestProjA)
-            {
-                bestProjA = p;
-                supportA = v;
-            }
-        }
-
-        float bestProjB = std::numeric_limits<float>::infinity();
-        Math::Vector2 supportB;
-        for (const auto& v : vertsB)
-        {
-            float p = Dot(v, bestAxis);
-            if (p < bestProjB)
-            {
-                bestProjB = p;
-                supportB = v;
-            }
-        }
-
-        Math::Vector2 contactPoint = (supportA + supportB) * 0.5f;
-
-        ContactPoint cp{};
+        
+        float penetration = combinedRadius - dist;
+        Math::Vector2 normal = (dist > 1e-4f) ? Normalize(delta) : Math::Vector2{1.0f, 0.0f};
+        
+        // Contact point on circle surface
+        Math::Vector2 contactPoint = circleCenter - normal * circle.radius;
+        
+        ECS::ContactPoint cp{};
         cp.position = contactPoint;
-        cp.normal = bestAxis;
-        cp.separation = -minOverlap;
+        cp.normal = normal;
+        cp.separation = -penetration;
         cp.normalImpulse = 0.0f;
         cp.tangentImpulse = 0.0f;
         cp.normalMass = 0.0f;
         cp.tangentMass = 0.0f;
         cp.featureId = 0;
         cp.persisted = false;
-
+        
         manifold.points.push_back(cp);
-        manifold.normal = bestAxis;
-        manifold.localNormal = {0.0f, 0.0f};
-        manifold.localPoint = {0.0f, 0.0f};
+        manifold.normal = normal;
+        
+        // Store local-space data
+        Math::Vector2 invRotA = Rotate(normal, -transformA.rotation);
+        manifold.localNormal = invRotA;
+        Math::Vector2 localContact = Rotate(contactPoint - transformA.position, -transformA.rotation);
+        manifold.localPoint = localContact;
+        
         manifold.touching = true;
-
+        
         return manifold;
     }
     
-    ContactManifold ManifoldGenerator::CapsuleCollision(uint32_t entityIdA,
-                                                        uint32_t entityIdB,
-                                                        uint32_t shapeIdA,
-                                                        uint32_t shapeIdB,
-                                                        const ColliderComponent& colliderA,
-                                                        const ColliderComponent& colliderB,
-                                                        const TransformComponent& transformA,
-                                                        const TransformComponent& transformB,
-                                                        ContactManifold& manifold)
+    ECS::ContactManifold ManifoldGenerator::PolygonCapsule(uint32_t entityIdA,
+                                                           uint32_t entityIdB,
+                                                           uint32_t shapeIdA,
+                                                           uint32_t shapeIdB,
+                                                           const ColliderComponent& polyCollider,
+                                                           const ColliderComponent& capsuleCollider,
+                                                           const TransformComponent& transformA,
+                                                           const TransformComponent& transformB,
+                                                           ECS::ContactManifold& manifold)
     {
-        // Capsules are approximated as line segments with radius
-        // For now, delegate to circle or segment collision based on other shape
-        // Full capsule-capsule collision would involve:
-        // 1. Finding closest points on both capsule center lines
-        // 2. Treating as sphere-sphere collision with those centers
-        // 3. Using combined radii for collision test
-        
+        // Polygon vs Capsule: test polygon edges against capsule line
         manifold.touching = false;
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
         
-        // TODO: Implement full capsule collision detection
-        // This requires finding the closest approach between two line segments
-        // and treating it as a circle-circle collision at that point
+        // For now, approximate capsule as circle at its center
+        // TODO: Implement full polygon-capsule SAT test
+        const auto& capsule = capsuleCollider.GetCapsule();
+        Math::Vector2 capCenter = transformB.position + (capsule.center1 + capsule.center2) * 0.5f;
+        
+        // Create temporary circle for approximation
+        ColliderComponent::CircleShape tempCircle{{0.0f, 0.0f}, capsule.radius};
+        TransformComponent tempTransform;
+        tempTransform.position = capCenter;
+        tempTransform.rotation = 0.0f;
+        
+        return CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
+                            tempCircle, polyCollider.GetPolygon(),
+                            tempTransform, transformA, true, manifold);
+    }
+    
+    ECS::ContactManifold ManifoldGenerator::CapsuleCapsule(uint32_t entityIdA,
+                                                           uint32_t entityIdB,
+                                                           uint32_t shapeIdA,
+                                                           uint32_t shapeIdB,
+                                                           const ColliderComponent& colliderA,
+                                                           const ColliderComponent& colliderB,
+                                                           const TransformComponent& transformA,
+                                                           const TransformComponent& transformB,
+                                                           ECS::ContactManifold& manifold)
+    {
+        // Capsule vs Capsule: find closest points on both center lines
+        manifold.touching = false;
+        manifold.entityIdA = entityIdA;
+        manifold.entityIdB = entityIdB;
+        manifold.shapeIdA = shapeIdA;
+        manifold.shapeIdB = shapeIdB;
+        
+        // Get capsule endpoints in world space for both capsules
+        const auto& capA = colliderA.GetCapsule();
+        const auto& capB = colliderB.GetCapsule();
+        
+        // Transform capsule A endpoints
+        float cosA = std::cos(transformA.rotation);
+        float sinA = std::sin(transformA.rotation);
+        Math::Vector2 a1 = {
+            transformA.position.x + (capA.center1.x * cosA - capA.center1.y * sinA),
+            transformA.position.y + (capA.center1.x * sinA + capA.center1.y * cosA)
+        };
+        Math::Vector2 a2 = {
+            transformA.position.x + (capA.center2.x * cosA - capA.center2.y * sinA),
+            transformA.position.y + (capA.center2.x * sinA + capA.center2.y * cosA)
+        };
+        
+        // Transform capsule B endpoints
+        float cosB = std::cos(transformB.rotation);
+        float sinB = std::sin(transformB.rotation);
+        Math::Vector2 b1 = {
+            transformB.position.x + (capB.center1.x * cosB - capB.center1.y * sinB),
+            transformB.position.y + (capB.center1.x * sinB + capB.center1.y * cosB)
+        };
+        Math::Vector2 b2 = {
+            transformB.position.x + (capB.center2.x * cosB - capB.center2.y * sinB),
+            transformB.position.y + (capB.center2.x * sinB + capB.center2.y * cosB)
+        };
+        
+        // Find closest points on two line segments
+        Math::Vector2 d1 = a2 - a1; // Direction of segment A
+        Math::Vector2 d2 = b2 - b1; // Direction of segment B
+        Math::Vector2 r = a1 - b1;
+        
+        float a = Dot(d1, d1);
+        float b = Dot(d1, d2);
+        float c = Dot(d2, d2);
+        float d = Dot(d1, r);
+        float e = Dot(d2, r);
+        
+        float denom = a * c - b * b;
+        float s, t;
+        
+        if (denom < 1e-8f)
+        {
+            // Segments are parallel
+            s = 0.0f;
+            t = 0.0f;
+        }
+        else
+        {
+            s = std::clamp((b * e - c * d) / denom, 0.0f, 1.0f);
+            t = std::clamp((a * e - b * d) / denom, 0.0f, 1.0f);
+        }
+        
+        Math::Vector2 closestA = a1 + d1 * s;
+        Math::Vector2 closestB = b1 + d2 * t;
+        
+        Math::Vector2 delta = closestB - closestA;
+        float dist = delta.Length();
+        float combinedRadius = capA.radius + capB.radius;
+        
+        if (dist > combinedRadius)
+            return manifold;
+        
+        float penetration = combinedRadius - dist;
+        Math::Vector2 normal = (dist > 1e-4f) ? Normalize(delta) : Math::Vector2{1.0f, 0.0f};
+        
+        // Contact point at midpoint
+        Math::Vector2 contactPoint = closestA + normal * capA.radius;
+        
+        ECS::ContactPoint cp{};
+        cp.position = contactPoint;
+        cp.normal = normal;
+        cp.separation = -penetration;
+        cp.normalImpulse = 0.0f;
+        cp.tangentImpulse = 0.0f;
+        cp.normalMass = 0.0f;
+        cp.tangentMass = 0.0f;
+        cp.featureId = 0;
+        cp.persisted = false;
+        
+        manifold.points.push_back(cp);
+        manifold.normal = normal;
+        
+        // Store local-space data
+        Math::Vector2 invRotA = Rotate(normal, -transformA.rotation);
+        manifold.localNormal = invRotA;
+        Math::Vector2 localContact = Rotate(contactPoint - transformA.position, -transformA.rotation);
+        manifold.localPoint = localContact;
+        
+        manifold.touching = true;
         
         return manifold;
     }
     
-    ContactManifold ManifoldGenerator::SegmentCollision(uint32_t entityIdA,
-                                                        uint32_t entityIdB,
-                                                        uint32_t shapeIdA,
-                                                        uint32_t shapeIdB,
-                                                        const ColliderComponent& colliderA,
-                                                        const ColliderComponent& colliderB,
-                                                        const TransformComponent& transformA,
-                                                        const TransformComponent& transformB,
-                                                        ContactManifold& manifold)
+    ECS::ContactManifold ManifoldGenerator::CapsuleCollision(uint32_t entityIdA,
+                                                             uint32_t entityIdB,
+                                                             uint32_t shapeIdA,
+                                                             uint32_t shapeIdB,
+                                                             const ColliderComponent& colliderA,
+                                                             const ColliderComponent& colliderB,
+                                                             const TransformComponent& transformA,
+                                                             const TransformComponent& transformB,
+                                                             ECS::ContactManifold& manifold)
+    {
+        // Delegate to SATCollisionDetector for proper capsule collision detection
+        SATCollisionDetector detector;
+        
+        const auto& capsuleA = colliderA.GetCapsule();
+        
+        // Build variant for other shape - must match SATCollisionDetector signature
+        std::variant<ColliderComponent::PolygonShape,
+                     ColliderComponent::CircleShape,
+                     ColliderComponent::CapsuleShape> otherShape;
+        
+        using ST = ColliderComponent::ShapeType;
+        ST tB = colliderB.GetType();
+        
+        if (tB == ST::Polygon)
+            otherShape = colliderB.GetPolygon();
+        else if (tB == ST::Circle)
+            otherShape = colliderB.GetCircle();
+        else if (tB == ST::Capsule)
+            otherShape = colliderB.GetCapsule();
+        else
+        {
+            // For Segment shapes, we'll handle them separately or skip
+            // For now, return empty manifold
+            return manifold;
+        }
+        
+        Physics::ContactManifold result = detector.DetectCapsuleCollision(
+            entityIdA, entityIdB,
+            capsuleA, otherShape, transformA, transformB);
+        return ConvertManifold(result);
+    }
+    
+    ECS::ContactManifold ManifoldGenerator::SegmentCollision(uint32_t entityIdA,
+                                                             uint32_t entityIdB,
+                                                             uint32_t shapeIdA,
+                                                             uint32_t shapeIdB,
+                                                             const ColliderComponent& colliderA,
+                                                             const ColliderComponent& colliderB,
+                                                             const TransformComponent& transformA,
+                                                             const TransformComponent& transformB,
+                                                             ECS::ContactManifold& manifold)
     {
         // Segments are zero-thickness edges (or thin if radius > 0)
         // Segment collisions involve:
@@ -458,6 +618,38 @@ namespace Nyon::Physics
         // Segment-segment collision is rare and can be handled as degenerate polygon
         
         return manifold;
+    }
+    
+    ECS::ContactManifold ManifoldGenerator::ConvertManifold(const Physics::ContactManifold& physicsManifold)
+    {
+        ECS::ContactManifold ecsManifold;
+        ecsManifold.entityIdA = physicsManifold.entityIdA;
+        ecsManifold.entityIdB = physicsManifold.entityIdB;
+        ecsManifold.shapeIdA = physicsManifold.shapeIdA;
+        ecsManifold.shapeIdB = physicsManifold.shapeIdB;
+        ecsManifold.normal = physicsManifold.normal;
+        ecsManifold.localNormal = physicsManifold.localNormal;
+        ecsManifold.localPoint = physicsManifold.localPoint;
+        ecsManifold.touching = physicsManifold.touching;
+        
+        // Convert contact points
+        for (const auto& physicsPoint : physicsManifold.points)
+        {
+            ECS::ContactPoint ecsPoint;
+            ecsPoint.position = physicsPoint.position;
+            ecsPoint.normal = physicsPoint.normal;
+            ecsPoint.separation = physicsPoint.separation;
+            ecsPoint.normalImpulse = physicsPoint.normalImpulse;
+            ecsPoint.tangentImpulse = physicsPoint.tangentImpulse;
+            ecsPoint.normalMass = physicsPoint.normalMass;
+            ecsPoint.tangentMass = physicsPoint.tangentMass;
+            ecsPoint.featureId = physicsPoint.featureId;
+            ecsPoint.persisted = physicsPoint.persisted;
+            
+            ecsManifold.points.push_back(ecsPoint);
+        }
+        
+        return ecsManifold;
     }
 }
 

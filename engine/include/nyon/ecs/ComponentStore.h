@@ -36,31 +36,36 @@ namespace Nyon::ECS
             std::vector<T> components;           // Dense array of components
             std::vector<EntityID> entityIds;     // Parallel array of entity IDs
             std::vector<bool> activeFlags;       // Active flag for each component
+            std::unordered_map<EntityID, size_t> indexMap; // O(1) lookup map
             
             void RemoveComponent(EntityID entity) override
             {
-                // Find entity in our dense arrays
-                for (size_t i = 0; i < entityIds.size(); ++i)
+                auto it = indexMap.find(entity);
+                if (it == indexMap.end()) return;
+                
+                size_t idx = it->second;
+                size_t last = components.size() - 1;
+                
+                if (idx != last)
                 {
-                    if (entityIds[i] == entity && activeFlags[i])
-                    {
-                        activeFlags[i] = false;
-                        // Component data remains but is marked inactive
-                        return;
-                    }
+                    // Swap-and-pop: move last element into the removed slot
+                    components[idx]  = std::move(components[last]);
+                    entityIds[idx]   = entityIds[last];
+                    activeFlags[idx] = activeFlags[last];
+                    indexMap[entityIds[idx]] = idx;
                 }
+                
+                // Remove the last element
+                components.pop_back();
+                entityIds.pop_back();
+                activeFlags.pop_back();
+                indexMap.erase(it);
             }
             
             bool HasComponent(EntityID entity) const override
             {
-                for (size_t i = 0; i < entityIds.size(); ++i)
-                {
-                    if (entityIds[i] == entity && activeFlags[i])
-                    {
-                        return true;
-                    }
-                }
-                return false;
+                auto it = indexMap.find(entity);
+                return it != indexMap.end() && activeFlags[it->second];
             }
             
             EntityID GetEntityAtIndex(size_t index) const override
@@ -74,29 +79,23 @@ namespace Nyon::ECS
             
             size_t GetComponentCount() const override
             {
-                size_t count = 0;
-                for (bool active : activeFlags)
-                {
-                    if (active) count++;
-                }
-                return count;
+                return indexMap.size();
             }
             
             // Add component to dense arrays
             void AddComponent(EntityID entity, T&& component)
             {
                 // Check if entity already has this component
-                for (size_t i = 0; i < entityIds.size(); ++i)
+                auto it = indexMap.find(entity);
+                if (it != indexMap.end() && activeFlags[it->second])
                 {
-                    if (entityIds[i] == entity && activeFlags[i])
-                    {
-                        // Update existing component
-                        components[i] = std::forward<T>(component);
-                        return;
-                    }
+                    // Update existing component
+                    components[it->second] = std::forward<T>(component);
+                    return;
                 }
                 
                 // Add new component
+                indexMap[entity] = components.size();
                 components.push_back(std::forward<T>(component));
                 entityIds.push_back(entity);
                 activeFlags.push_back(true);
@@ -113,6 +112,18 @@ namespace Nyon::ECS
             {
                 assert(index < components.size() && activeFlags[index]);
                 return components[index];
+            }
+            
+            // Get all entities with this component (O(1) - returns cached vector)
+            const std::vector<EntityID>& GetEntities() const
+            {
+                return entityIds;
+            }
+            
+            // Get active flags for direct access
+            const std::vector<bool>& GetActiveFlags() const
+            {
+                return activeFlags;
             }
         };
         
@@ -157,22 +168,18 @@ namespace Nyon::ECS
         template<typename T>
         T& GetComponent(EntityID entity)
         {
-            assert(HasComponent<T>(entity));
-            auto& container = GetContainer<T>();
-            
-            // Find the component for this entity
-            for (size_t i = 0; i < container.entityIds.size(); ++i)
-            {
-                if (container.entityIds[i] == entity && container.activeFlags[i])
-                {
-                    return container.components[i];
-                }
+            auto containerIt = m_Containers.find(typeid(T));
+            if (containerIt == m_Containers.end()) {
+                std::terminate(); // Component type not registered
             }
             
-            // This should never happen due to the assert above
-            assert(false);
-            static T dummy{};
-            return dummy;
+            auto& container = *static_cast<ComponentContainer<T>*>(containerIt->second.get());
+            auto mapIt = container.indexMap.find(entity);
+            if (mapIt == container.indexMap.end() || !container.activeFlags[mapIt->second]) {
+                std::terminate(); // Entity does not have this component
+            }
+            
+            return container.components[mapIt->second];
         }
         
         /**
@@ -184,22 +191,18 @@ namespace Nyon::ECS
         template<typename T>
         const T& GetComponent(EntityID entity) const
         {
-            assert(HasComponent<T>(entity));
-            const auto& container = GetContainer<T>();
-            
-            // Find the component for this entity
-            for (size_t i = 0; i < container.entityIds.size(); ++i)
-            {
-                if (container.entityIds[i] == entity && container.activeFlags[i])
-                {
-                    return container.components[i];
-                }
+            auto containerIt = m_Containers.find(typeid(T));
+            if (containerIt == m_Containers.end()) {
+                std::terminate(); // Component type not registered
             }
             
-            // This should never happen due to the assert above
-            assert(false);
-            static T dummy{};
-            return dummy;
+            const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
+            auto mapIt = container.indexMap.find(entity);
+            if (mapIt == container.indexMap.end() || !container.activeFlags[mapIt->second]) {
+                std::terminate(); // Entity does not have this component
+            }
+            
+            return container.components[mapIt->second];
         }
         
         /**
@@ -224,21 +227,15 @@ namespace Nyon::ECS
          * @return Vector of entity IDs with this component
          */
         template<typename T>
-        std::vector<EntityID> GetEntitiesWithComponent() const
+        const std::vector<EntityID>& GetEntitiesWithComponent() const
         {
-            std::vector<EntityID> entities;
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
-                for (size_t i = 0; i < container.entityIds.size(); ++i)
-                {
-                    if (container.activeFlags[i])
-                    {
-                        entities.push_back(container.entityIds[i]);
-                    }
-                }
+                return container.GetEntities();
             }
-            return entities;
+            static std::vector<EntityID> empty;
+            return empty;
         }
         
         /**
@@ -253,11 +250,12 @@ namespace Nyon::ECS
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 auto& container = *static_cast<ComponentContainer<T>*>(containerIt->second.get());
-                for (size_t i = 0; i < container.components.size(); ++i)
+                // Iterate using indexMap for O(1) access
+                for (const auto& [entityId, index] : container.indexMap)
                 {
-                    if (container.activeFlags[i])
+                    if (container.activeFlags[index])
                     {
-                        func(container.entityIds[i], container.components[i]);
+                        func(entityId, container.components[index]);
                     }
                 }
             }
@@ -275,11 +273,12 @@ namespace Nyon::ECS
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
-                for (size_t i = 0; i < container.components.size(); ++i)
+                // Iterate using indexMap for O(1) access
+                for (const auto& [entityId, index] : container.indexMap)
                 {
-                    if (container.activeFlags[i])
+                    if (container.activeFlags[index])
                     {
-                        func(container.entityIds[i], container.components[i]);
+                        func(entityId, container.components[index]);
                     }
                 }
             }

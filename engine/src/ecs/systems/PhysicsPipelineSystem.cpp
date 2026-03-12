@@ -1,37 +1,39 @@
 #include "nyon/ecs/systems/PhysicsPipelineSystem.h"
 #include "nyon/ecs/components/JointComponent.h"
+#include "nyon/physics/ManifoldGenerator.h"
 #include <chrono>
-#include <iostream>
 #include <algorithm>
 
+// Debug logging macro - only output in debug builds
 #ifdef _DEBUG
-#define NYON_DEBUG_LOG(x) std::cout << "[PhysicsPipeline] " << x << std::endl
+#define NYON_DEBUG_LOG(x) std::cerr << "[PhysicsPipeline] " << x << std::endl
 #else
 #define NYON_DEBUG_LOG(x)
 #endif
 
 namespace Nyon::ECS
 {
-    void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore)
+void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore)
+{
+    m_ComponentStore = &componentStore;
+
+    // Find physics world component
+    m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
+        m_PhysicsWorld = &world;
+        NYON_DEBUG_LOG("Found PhysicsWorldComponent at entity ID: " << entityId);
+    });
+
+    if (!m_PhysicsWorld)
     {
-        m_ComponentStore = &componentStore;
-        
-        // Find physics world component
-        m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
-            m_PhysicsWorld = &world;
-        });
-        
-        if (!m_PhysicsWorld)
-        {
-            NYON_DEBUG_LOG("Warning: No PhysicsWorldComponent found!");
-            return;
-        }
-        
-        // Initialize island manager
-        m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
-        
-        NYON_DEBUG_LOG("PhysicsPipelineSystem initialized");
+        NYON_DEBUG_LOG("Warning: No PhysicsWorldComponent found!");
+        return;
     }
+
+    // Initialize island manager
+    m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
+
+    NYON_DEBUG_LOG("PhysicsPipelineSystem initialized");
+}
 
     void PhysicsPipelineSystem::Update(float deltaTime)
     {
@@ -242,9 +244,11 @@ namespace Nyon::ECS
         // Apply gravity and other forces
         for (auto& body : m_SolverBodies)
         {
-            if (!body.isStatic && body.isAwake)
+            if (!body.isStatic && body.isAwake && m_PhysicsWorld)
             {
-                body.force += Math::Vector2{0.0f, 1000.0f}; // Gravity
+                // Apply gravity as force: F = m * g
+                float mass = (body.invMass > 0.0f) ? 1.0f / body.invMass : 0.0f;
+                body.force += m_PhysicsWorld->gravity * mass;
             }
         }
         
@@ -278,10 +282,7 @@ namespace Nyon::ECS
                 auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(solverBody.entityId);
                 body.velocity = solverBody.velocity;
                 body.angularVelocity = solverBody.angularVelocity;
-                
-                // Apply damping
-                body.velocity *= 0.99f;
-                body.angularVelocity *= 0.99f;
+                // Damping is already applied in ConstraintSolverSystem - no additional damping here
             }
         }
     }
@@ -293,8 +294,8 @@ namespace Nyon::ECS
         {
             for (auto& point : constraint.points)
             {
-                point.normalImpulse *= 0.9f; // Impulse decay
-                point.tangentImpulse *= 0.9f;
+                // Preserve impulses at full value for effective warm starting
+                // No decay - impulses should be maintained across frames
             }
         }
     }
@@ -335,8 +336,8 @@ namespace Nyon::ECS
     {
         uint32_t otherEntityId = userData;
         
-        // Avoid self-collision and duplicate pairs
-        if (otherEntityId >= entityId)
+        // Avoid self-collision and ensure canonical pair ordering
+        if (otherEntityId <= entityId)
             return true;
             
         // Check if both entities have colliders and are not filtered
@@ -360,7 +361,7 @@ namespace Nyon::ECS
                                               const Math::Vector2& position, float angle)
     {
         Math::Vector2 min, max;
-        collider->CalculateAABB(position, min, max);
+        collider->CalculateAABB(position, angle, min, max);
         
         Physics::AABB aabb;
         aabb.lowerBound = {min.x, min.y};
@@ -376,8 +377,13 @@ namespace Nyon::ECS
         auto it = m_ShapeProxyMap.find(entityId);
         if (it != m_ShapeProxyMap.end())
         {
-            // Update existing proxy
-            m_BroadPhaseTree.MoveProxy(it->second, fatAABB, {0.0f, 0.0f});
+            // Update existing proxy with velocity-based displacement hint
+            Math::Vector2 displacement = {0.0f, 0.0f};
+            if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId)) {
+                const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
+                displacement = body.velocity * FIXED_TIMESTEP;
+            }
+            m_BroadPhaseTree.MoveProxy(it->second, fatAABB, displacement);
         }
         else
         {
@@ -404,8 +410,8 @@ namespace Nyon::ECS
         const auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(entityIdB);
         
         Math::Vector2 minA, maxA, minB, maxB;
-        colliderA.CalculateAABB(transformA.position, minA, maxA);
-        colliderB.CalculateAABB(transformB.position, minB, maxB);
+        colliderA.CalculateAABB(transformA.position, transformA.rotation, minA, maxA);
+        colliderB.CalculateAABB(transformB.position, transformB.rotation, minB, maxB);
         
         // AABB overlap test
         return !(minA.x >= maxB.x || maxA.x <= minB.x || minA.y >= maxB.y || maxA.y <= minB.y);
@@ -430,38 +436,31 @@ namespace Nyon::ECS
         const auto& transformA = m_ComponentStore->GetComponent<TransformComponent>(entityIdA);
         const auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(entityIdB);
         
-        // Simple contact point generation for boxes
-        Math::Vector2 minA, maxA, minB, maxB;
-        colliderA.CalculateAABB(transformA.position, minA, maxA);
-        colliderB.CalculateAABB(transformB.position, minB, maxB);
+        // Use proper ManifoldGenerator for accurate contact generation
+        // Get first shape from each entity (assuming single-shape entities)
+        uint32_t shapeIdA = 0;
+        uint32_t shapeIdB = 0;
         
-        // Calculate overlap
-        Math::Vector2 overlapMin = {
-            std::max(minA.x, minB.x),
-            std::max(minA.y, minB.y)
-        };
-        Math::Vector2 overlapMax = {
-            std::min(maxA.x, maxB.x),
-            std::min(maxA.y, maxB.y)
-        };
+        ECS::ContactManifold generatedManifold = Physics::ManifoldGenerator::GenerateManifold(
+            entityIdA, entityIdB,
+            shapeIdA, shapeIdB,
+            colliderA, colliderB,
+            transformA, transformB
+        );
         
-        if (overlapMin.x < overlapMax.x && overlapMin.y < overlapMax.y)
+        // Convert to internal ContactManifold format
+        manifold.points.reserve(generatedManifold.points.size());
+        manifold.normal = generatedManifold.normal;
+        
+        for (const auto& point : generatedManifold.points)
         {
-            // Create contact points at corners of overlap region
-            ContactPoint point;
-            point.position = {(overlapMin.x + overlapMax.x) * 0.5f, (overlapMin.y + overlapMax.y) * 0.5f};
-            
-            // Calculate normal (from A to B)
-            Math::Vector2 centerA = (minA + maxA) * 0.5f;
-            Math::Vector2 centerB = (minB + maxB) * 0.5f;
-            manifold.normal = (centerB - centerA).Normalize();
-            
-            point.normal = manifold.normal;
-            point.separation = -(overlapMax.x - overlapMin.x) * 0.5f - (overlapMax.y - overlapMin.y) * 0.5f;
-            point.normalImpulse = 0.0f;
-            point.tangentImpulse = 0.0f;
-            
-            manifold.points.push_back(point);
+            ContactPoint contactPoint;
+            contactPoint.position = point.position;
+            contactPoint.normal = point.normal;
+            contactPoint.separation = point.separation;
+            contactPoint.normalImpulse = 0.0f;
+            contactPoint.tangentImpulse = 0.0f;
+            manifold.points.push_back(contactPoint);
         }
         
         return manifold;

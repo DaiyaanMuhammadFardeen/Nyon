@@ -63,19 +63,19 @@ namespace Nyon::ECS
                 // Calculate true polygon centroid using area-weighted formula (shoelace method)
                 // This fixes angular dynamics errors for irregular polygons
                 centroid = {0.0f, 0.0f};
-                float signedArea = 0.0f;
+                float twoArea = 0.0f;
                 
                 size_t n = vertices.size();
                 for (size_t i = 0; i < n; ++i) {
                     size_t j = (i + 1) % n;
                     float cross = vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
-                    signedArea += cross;
+                    twoArea += cross;
                     centroid.x += (vertices[i].x + vertices[j].x) * cross;
                     centroid.y += (vertices[i].y + vertices[j].y) * cross;
                 }
                 
-                if (std::abs(signedArea) > 0.0001f) {
-                    centroid = centroid * (1.0f / (6.0f * (signedArea * 0.5f)));
+                if (std::abs(twoArea) > 0.0002f) {
+                    centroid = centroid * (1.0f / (3.0f * twoArea)); // Direct formula using 2*area
                 } else {
                     // Fallback to vertex average for degenerate cases
                     centroid = {0.0f, 0.0f};
@@ -414,32 +414,40 @@ namespace Nyon::ECS
                 case ShapeType::Circle:
                 {
                     const auto& circle = GetCircle();
-                    // I = 0.5 * m * r^2  → for unit density, m = area = π r^2
-                    // So I = 0.5 * π * r^4
-                    float r2 = circle.radius * circle.radius;
-                    return 0.5f * 3.14159f * r2 * r2;
+                    // I/m = r²/2 for solid disk (per-unit-mass inertia)
+                    // Caller multiplies by mass to get actual inertia: I = m * (r²/2)
+                    return 0.5f * circle.radius * circle.radius;
                 }
                 
                 case ShapeType::Polygon:
                 {
-                    // Approximate polygon as box using its AABB extents.
+                    // Correct polygon inertia using shoelace-based formula
                     const auto& polygon = GetPolygon();
                     if (polygon.vertices.size() < 3) return 0.0f;
                     
-                    Math::Vector2 min = polygon.vertices[0];
-                    Math::Vector2 max = polygon.vertices[0];
-                    for (const auto& v : polygon.vertices)
-                    {
-                        min.x = std::min(min.x, v.x);
-                        min.y = std::min(min.y, v.y);
-                        max.x = std::max(max.x, v.x);
-                        max.y = std::max(max.y, v.y);
+                    const auto& verts = polygon.vertices;
+                    size_t n = verts.size();
+                    float numerator = 0.0f;
+                    float twoArea = 0.0f;
+                    
+                    for (size_t i = 0; i < n; ++i) {
+                        const Math::Vector2& p0 = verts[i];
+                        const Math::Vector2& p1 = verts[(i + 1) % n];
+                        float cross = std::abs(Math::Vector2::Cross(p0, p1));
+                        
+                        // Accumulate terms for moment of inertia
+                        numerator += cross * (
+                            p0.x * p0.x + p0.x * p1.x + p1.x * p1.x +
+                            p0.y * p0.y + p0.y * p1.y + p1.y * p1.y
+                        );
+                        
+                        // Accumulate 2 * area
+                        twoArea += cross;
                     }
-                    float w = max.x - min.x;
-                    float h = max.y - min.y;
-                    // Box inertia for unit density: I = (w^2 + h^2) * area / 12
-                    float area = CalculateArea();
-                    return area * (w * w + h * h) / 12.0f;
+                    
+                    // I = (density * area * numerator) / (6 * 2*area) = density * numerator / 12
+                    // For unit density: I = numerator / 12
+                    return numerator / 12.0f;
                 }
                 
                 case ShapeType::Capsule:
@@ -474,13 +482,8 @@ namespace Nyon::ECS
         void SetFilter(const Filter& newFilter) { filter = newFilter; }
         Filter GetFilter() const { return filter; }
         
-        // Backwards compatibility methods
+        // Backwards compatibility method - DEPRECATED, use CalculateAABB(position, rotation, min, max) instead
         void GetBounds(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
-        {
-            CalculateAABB(position, 0.0f, outMin, outMax);
-        }
-        
-        void CalculateAABB(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
         {
             CalculateAABB(position, 0.0f, outMin, outMax);
         }

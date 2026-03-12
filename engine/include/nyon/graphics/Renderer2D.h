@@ -108,7 +108,8 @@ namespace Nyon::Graphics
         static void DrawQuad(const Math::Vector2& position, 
                             const Math::Vector2& size, 
                             const Math::Vector2& origin,
-                            const Math::Vector3& color);
+                            const Math::Vector3& color,
+                            float rotation = 0.0f);
         
         static void DrawCircle(const Math::Vector2& center, 
                               float radius, 

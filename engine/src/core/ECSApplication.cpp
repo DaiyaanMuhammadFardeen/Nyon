@@ -1,8 +1,8 @@
 #include "nyon/core/ECSApplication.h"
 #include "nyon/ecs/systems/InputSystem.h"
-// Removed legacy system includes
 #include "nyon/ecs/systems/RenderSystem.h"
 #include "nyon/ecs/systems/DebugRenderSystem.h"
+#include "nyon/ecs/systems/PhysicsPipelineSystem.h"
 #include "nyon/utils/InputManager.h"
 #include <iostream>
 
@@ -37,10 +37,15 @@ namespace Nyon
         Utils::InputManager::Init(GetWindow());
         
         // Initialize ECS systems in proper order
-        m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
-        m_SystemManager.AddSystem(std::make_unique<ECS::RenderSystem>());
+m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
+m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
+m_SystemManager.AddSystem(std::make_unique<ECS::RenderSystem>());
+m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
         
         m_ECSInitialized = true;
+        
+        // Cache DebugRenderSystem pointer to avoid dynamic_cast every frame
+        m_DebugRenderSystem = m_SystemManager.GetSystem<ECS::DebugRenderSystem>();
         
         // Call game-specific ECS initialization
         OnECSStart();
@@ -54,10 +59,13 @@ namespace Nyon
         
         if (m_ECSInitialized)
         {
-            // Update all ECS systems
+            // Update only non-render ECS systems (physics, input, etc.)
             m_SystemManager.Update(deltaTime);
             
-            // Call game-specific ECS update
+            // Call game-specific fixed-step physics logic
+            OnECSFixedUpdate(deltaTime);
+            
+            // Call game-specific ECS update (user logic after physics)
             OnECSUpdate(deltaTime);
         }
         
@@ -66,34 +74,32 @@ namespace Nyon
     
     void ECSApplication::OnInterpolateAndRender(float alpha)
     {
-        // Pass interpolation alpha to RenderSystem for smooth rendering
-        ECS::RenderSystem* renderSystem = m_SystemManager.GetSystem<ECS::RenderSystem>();
-        if (renderSystem)
-        {
-            renderSystem->SetInterpolationAlpha(alpha);
-        }
-        
-        // Update render system with interpolation
         if (m_ECSInitialized)
         {
-            // Only update render system during interpolation phase
-            renderSystem->Update(0.0f); // Delta time not used in rendering
+            // Pass interpolation alpha to RenderSystem for smooth rendering
+            ECS::RenderSystem* renderSystem = m_SystemManager.GetSystem<ECS::RenderSystem>();
+            if (renderSystem)
+            {
+                renderSystem->SetInterpolationAlpha(alpha);
+                // Update render system with interpolation
+                renderSystem->Update(0.0f); // Delta time not used in rendering
+            }
         }
         
         // Rendering is handled by the RenderSystem
         // This method exists for compatibility but delegates to ECS systems
         NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnInterpolateAndRender() called with alpha: " << alpha);
         
-        // Render debug information if DebugRenderSystem exists
-        ECS::DebugRenderSystem* debugSystem = GetDebugRenderSystem();
-        if (debugSystem)
+        // Render debug information if DebugRenderSystem exists (use cached pointer)
+        if (m_DebugRenderSystem)
         {
-            debugSystem->RenderDebugInfo();
+            m_DebugRenderSystem->RenderDebugInfo();
         }
     }
     
     ECS::DebugRenderSystem* ECSApplication::GetDebugRenderSystem()
     {
-        return m_SystemManager.GetSystem<ECS::DebugRenderSystem>();
+        // Return cached pointer - no dynamic_cast needed
+        return m_DebugRenderSystem;
     }
 }

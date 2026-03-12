@@ -63,6 +63,22 @@ namespace Nyon::ECS
         int positionIterations = 3;                 // Position constraint solver iterations
         int subStepCount = 4;                       // Sub-stepping for stability
         
+        // === POSITION CORRECTION PARAMETERS ===
+        float baumgarteBeta = 0.2f;                 // Baumgarte stabilization factor
+        float linearSlop = 0.005f;                  // Linear slop for position correction
+        float maxLinearCorrection = 0.2f;           // Maximum linear position correction
+        float maxAngularCorrection = 0.1f;          // Maximum angular position correction
+        float maxPenetrationCorrection = 50.0f;     // Maximum penetration depth correction
+        
+        // === SLEEP PARAMETERS ===
+        float sleepLinearThreshold = 0.01f;         // Linear velocity threshold for sleeping
+        float sleepAngularThreshold = 0.01f;        // Angular velocity threshold for sleeping
+        float sleepTimeThreshold = 0.5f;            // Time duration before allowing sleep
+        
+        // === DAMPING PARAMETERS ===
+        // Note: For frame-rate-independent damping, use formula: 1.0f / (1.0f + dt * damping)
+        // Default values approximate air resistance
+        
         // === GLOBAL PARAMETERS ===
         float restitutionThreshold = 100.0f;        // Velocity threshold for restitution
         float maxLinearSpeed = 10000.0f;            // Maximum body linear speed

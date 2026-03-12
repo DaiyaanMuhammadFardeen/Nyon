@@ -75,7 +75,7 @@ namespace Nyon::Graphics
                            const Math::Vector3& color);
         
         // === MANIFOLD RENDERING ===
-        void DrawManifold(const Physics::ContactManifold& manifold);
+        void DrawManifold(const ECS::ContactManifold& manifold);
         void DrawContactPoint(const Math::Vector2& position,
                             const Math::Vector2& normal,
                             float separation,

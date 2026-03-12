@@ -1,493 +1,390 @@
 #include "PhysicsDemoGame.h"
-#include <iostream>
-#include <cmath>
 
-namespace Game
+#include "nyon/ecs/EntityManager.h"
+#include "nyon/ecs/ComponentStore.h"
+#include "nyon/ecs/SystemManager.h"
+
+#include "nyon/ecs/components/TransformComponent.h"
+#include "nyon/ecs/components/PhysicsWorldComponent.h"
+#include "nyon/ecs/components/PhysicsBodyComponent.h"
+#include "nyon/ecs/components/ColliderComponent.h"
+
+#include "nyon/ecs/systems/PhysicsIntegrationSystem.h"
+#include "nyon/ecs/systems/DebugRenderSystem.h"
+
+#include "nyon/utils/InputManager.h"
+
+#include <GLFW/glfw3.h>
+
+using namespace Nyon;
+
+PhysicsDemoGame::PhysicsDemoGame()
+    : ECSApplication("Nyon Physics Demo – Full Showcase", 1280, 720)
 {
-    PhysicsDemoGame::PhysicsDemoGame() : 
-        ECSApplication("Nyon Physics Demo - Interactive Playground", 1280, 720),
-        m_RandomGenerator(std::random_device{}()),
-        m_FloatDistribution(0.0f, 1.0f)
-    {
-    }
-    
-    void PhysicsDemoGame::OnECSStart()
-    {
-        std::cout << "[DEBUG] PhysicsDemoGame::OnECSStart() called\n";
-        
-        // Parent initialization is handled automatically
-        
-        // First create physics world component BEFORE adding systems
-        // This ensures CollisionPipelineSystem and ConstraintSolverSystem can access it during Initialize()
-        std::cout << "[DEBUG] Creating physics world component first\n";
-        auto& entityManager = GetEntityManager();
-        auto& componentStore = GetComponentStore();
-        auto worldEntity = entityManager.CreateEntity();
-        componentStore.AddComponent<Nyon::ECS::PhysicsWorldComponent>(worldEntity, Nyon::ECS::PhysicsWorldComponent());
-        
-        // Register physics systems in correct physical order:
-        // 1. PhysicsIntegrationSystem (apply forces, integrate velocities, boundary enforcement)
-        // 2. CollisionPipelineSystem (broad + narrow phase, generate manifolds)  
-        // 3. ConstraintSolverSystem (solve velocity/position constraints)
-        // 4. DebugRenderSystem (overlay debug info)
-        std::cout << "[DEBUG] Getting system manager\n";
-        auto& systemManager = GetSystemManager();
-        
-        std::cout << "[DEBUG] Adding PhysicsIntegrationSystem\n";
-        systemManager.AddSystem(std::make_unique<Nyon::ECS::PhysicsIntegrationSystem>());
-        
-        std::cout << "[DEBUG] Adding CollisionPipelineSystem\n";
-        systemManager.AddSystem(std::make_unique<Nyon::ECS::CollisionPipelineSystem>());
-        
-        std::cout << "[DEBUG] Adding ConstraintSolverSystem\n";
-        systemManager.AddSystem(std::make_unique<Nyon::ECS::ConstraintSolverSystem>());
-        
-        // REMOVED: ContinuousCollisionSystem to avoid conflict with CollisionPipelineSystem
-        // ContinuousCollisionSystem was causing double collision resolution and conflicting corrections
-        
-        // REMOVED: TransformPhysicsSyncSystem to prevent double position integration
-        // TransformPhysicsSyncSystem was causing double integration - position is already 
-        // integrated by PhysicsIntegrationSystem with proper deltaTime scaling
-        
-        std::cout << "[DEBUG] Adding DebugRenderSystem\n";
-        systemManager.AddSystem(std::make_unique<Nyon::ECS::DebugRenderSystem>());
-        
-        std::cout << "[DEBUG] All systems added successfully\n";
-        
-        // Create game scene
-        std::cout << "[DEBUG] Creating environment\n";
-        CreateEnvironment();
-        std::cout << "[DEBUG] Creating player\n";
-        CreatePlayer();
-        std::cout << "[DEBUG] Creating interactive objects\n";
-        CreateInteractiveObjects();
-        std::cout << "[DEBUG] Creating obstacles\n";
-        CreateObstacles();
-        
-        std::cout << "Physics demo game initialized with " << m_GameEntities.size() << " entities\n";
-        std::cout << "Controls:\n";
-        std::cout << "  Arrow Keys - Move player\n";
-        std::cout << "  Space - Jump\n";
-        std::cout << "  F1 - Toggle debug rendering\n";
-        std::cout << "  R - Reset scene\n";
-        std::cout << "  Objects spawn automatically every 2 seconds\n";
-    }
-    
-    void PhysicsDemoGame::OnECSUpdate(float deltaTime)
-    {
-        // Handle input
-        // Using static methods directly from InputManager
-        
-        // Toggle debug rendering
-        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_F1))
-        {
-            m_ShowDebug = !m_ShowDebug;
-            std::cout << "Debug rendering " << (m_ShowDebug ? "enabled" : "disabled") << std::endl;
-            
-            // Note: System enabling/disabling would require extending the SystemManager API
-        }
-        
-        // Restart scene
-        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_R))
-        {
-            std::cout << "Restarting scene..." << std::endl;
-            RestartScene();
-        }
-        
-        // Handle player input
-        HandlePlayerInput(deltaTime);
-        
-        // Spawn random objects periodically
-        m_SpawnTimer += deltaTime;
-        if (m_SpawnTimer >= SPAWN_INTERVAL)
-        {
-            SpawnRandomObject();
-            m_SpawnTimer = 0.0f;
-        }
-        
-        // Parent update is handled automatically
-    }
-    
-    void PhysicsDemoGame::CreateEnvironment()
-    {
-        // Create ground platforms
-        auto groundId = CreateBox({640, 680}, {1200, 40}, 0.0f, true);
-        auto& groundCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(groundId);
-        groundCollider.color = {0.3f, 0.6f, 0.3f}; // Green ground
-        auto& groundRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(groundId);
-        groundRenderer.color = {0.3f, 0.6f, 0.3f}; // Green ground
-        m_GameEntities.push_back(groundId);
-        
-        // Create walls
-        auto leftWallId = CreateBox({20, 360}, {40, 720}, 0.0f, true);
-        auto rightWallId = CreateBox({1260, 360}, {40, 720}, 0.0f, true);
-        auto& leftWallCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(leftWallId);
-        auto& rightWallCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(rightWallId);
-        leftWallCollider.color = {0.5f, 0.5f, 0.5f};
-        rightWallCollider.color = {0.5f, 0.5f, 0.5f};
-        
-        auto& leftWallRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(leftWallId);
-        auto& rightWallRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(rightWallId);
-        leftWallRenderer.color = {0.5f, 0.5f, 0.5f};
-        rightWallRenderer.color = {0.5f, 0.5f, 0.5f};
-        m_GameEntities.push_back(leftWallId);
-        m_GameEntities.push_back(rightWallId);
-        
-        std::cout << "Created environment boundaries\n";
-    }
-    
-    void PhysicsDemoGame::CreatePlayer()
-    {
-        // Create player character
-        m_PlayerId = CreateCircle({640, 500}, 20.0f, 1.0f, false);
-        auto& playerBody = GetComponentStore().GetComponent<Nyon::ECS::PhysicsBodyComponent>(m_PlayerId);
-        auto& playerCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(m_PlayerId);
-        
-        // Player-specific properties
-        playerBody.friction = 0.1f;
-        playerBody.restitution = 0.3f;
-        playerBody.drag = 0.05f;
-        playerCollider.color = {0.2f, 0.6f, 0.9f}; // Blue player
-        
-        auto& playerRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(m_PlayerId);
-        playerRenderer.color = {0.2f, 0.6f, 0.9f}; // Blue player
-        
-        m_GameEntities.push_back(m_PlayerId);
-        std::cout << "Created player character\n";
-    }
-    
-    void PhysicsDemoGame::CreateInteractiveObjects()
-    {
-        // Create interactive physics objects
-        const int numObjects = 8;
-        
-        for (int i = 0; i < numObjects; ++i)
-        {
-            float x = 300.0f + (i % 4) * 150.0f;
-            float y = 400.0f + (i / 4) * 80.0f;
-            
-            Nyon::ECS::EntityID objectId;
-            
-            // Alternate between different shapes
-            switch (i % 3)
-            {
-                case 0: // Box
-                    objectId = CreateBox({x, y}, {30, 30}, 1.0f, false);
-                    break;
-                case 1: // Circle
-                    objectId = CreateCircle({x, y}, 20.0f, 1.0f, false);
-                    break;
-                case 2: // Capsule
-                    objectId = CreateCapsule({x, y}, 40.0f, 15.0f, 1.0f, false);
-                    break;
-            }
-            
-            // Color based on type
-            auto& collider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(objectId);
-            auto& renderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(objectId);
-            switch (i % 3)
-            {
-                case 0: 
-                    collider.color = {0.9f, 0.3f, 0.3f}; 
-                    renderer.color = {0.9f, 0.3f, 0.3f}; // Red boxes
-                    break;
-                case 1: 
-                    collider.color = {0.3f, 0.9f, 0.3f}; 
-                    renderer.color = {0.3f, 0.9f, 0.3f}; // Green circles
-                    break;
-                case 2: 
-                    collider.color = {0.9f, 0.9f, 0.3f}; 
-                    renderer.color = {0.9f, 0.9f, 0.3f}; // Yellow capsules
-                    break;
-            }
-            
-            m_GameEntities.push_back(objectId);
-        }
-        
-        std::cout << "Created interactive objects\n";
-    }
-    
-    void PhysicsDemoGame::CreateObstacles()
-    {
-        // Create some obstacles and ramps
-        auto rampId = CreateBox({1000, 550}, {150, 20}, 0.0f, true);
-        auto& rampTransform = GetComponentStore().GetComponent<Nyon::ECS::TransformComponent>(rampId);
-        // Convert 25 degrees to radians: 25 * π/180 ≈ 0.436 radians
-        rampTransform.rotation = 25.0f * 3.14159f / 180.0f;
-        auto& rampCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(rampId);
-        rampCollider.color = {0.7f, 0.5f, 0.3f}; // Brown ramp
-        auto& rampRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(rampId);
-        rampRenderer.color = {0.7f, 0.5f, 0.3f}; // Brown ramp
-        m_GameEntities.push_back(rampId);
-        
-        // Platform above ramp
-        auto platformId = CreateBox({1100, 450}, {80, 15}, 0.0f, true);
-        auto& platformCollider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(platformId);
-        platformCollider.color = {0.6f, 0.4f, 0.8f}; // Purple platform
-        auto& platformRenderer = GetComponentStore().GetComponent<Nyon::ECS::RenderComponent>(platformId);
-        platformRenderer.color = {0.6f, 0.4f, 0.8f}; // Purple platform
-        m_GameEntities.push_back(platformId);
-        
-        std::cout << "Created obstacles and platforms\n";
-    }
-    
-    void PhysicsDemoGame::RestartScene()
-    {
-        auto& entityManager = GetEntityManager();
-        auto& componentStore = GetComponentStore();
-        
-        // Destroy all game entities
-        for (auto entityId : m_GameEntities)
-        {
-            // Simple destruction - in a real implementation, we'd check validity
-            entityManager.DestroyEntity(entityId);
-        }
-        
-        // Clear entity list
-        m_GameEntities.clear();
-        m_PlayerId = 0;
-        
-        // Reset spawn timer
-        m_SpawnTimer = 0.0f;
-        
-        // Recreate the scene
-        CreateEnvironment();
-        CreatePlayer();
-        CreateInteractiveObjects();
-        CreateObstacles();
-        
-        std::cout << "Scene restarted with " << m_GameEntities.size() << " entities" << std::endl;
-    }
-    
-    void PhysicsDemoGame::HandlePlayerInput(float deltaTime)
-    {
-        if (!m_PlayerId || !GetComponentStore().HasComponent<Nyon::ECS::PhysicsBodyComponent>(m_PlayerId))
-            return;
-            
-        // Using static methods directly from InputManager
-        auto& playerBody = GetComponentStore().GetComponent<Nyon::ECS::PhysicsBodyComponent>(m_PlayerId);
-        
-        // Tunable player movement parameters
-        const float maxRunSpeed = 400.0f;
-        const float accel = 6000.0f;
-        const float damping = 8.0f;      // how quickly we slow down when no input
-        const float jumpImpulse = 12000.0f;
-        
-        // Desired horizontal velocity based on input
-        float targetVelX = 0.0f;
-        if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_A))
-        {
-            targetVelX = -maxRunSpeed;
-        }
-        else if (Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_D))
-        {
-            targetVelX = maxRunSpeed;
-        }
-        
-        // Smoothly move velocity toward target
-        float deltaV = targetVelX - playerBody.velocity.x;
-        float maxDelta = accel * deltaTime;
-        if (deltaV > maxDelta) deltaV = maxDelta;
-        else if (deltaV < -maxDelta) deltaV = -maxDelta;
-        
-        playerBody.velocity.x += deltaV;
-        
-        // Apply extra damping when there is no input to make stopping snappy
-        if (std::abs(targetVelX) < 1e-3f)
-        {
-            playerBody.velocity.x -= playerBody.velocity.x * std::min(damping * deltaTime, 1.0f);
-        }
-        
-        // Jumping: only when grounded and on key press (not held)
-        if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_SPACE) && playerBody.IsStablyGrounded())
-        {
-            playerBody.ApplyLinearImpulse({0.0f, -jumpImpulse});
-        }
-    }
-    
-    void PhysicsDemoGame::SpawnRandomObject()
-    {
-        // Spawn random physics objects from the top
-        float x = 200.0f + m_FloatDistribution(m_RandomGenerator) * 880.0f;
-        float y = 100.0f;
-        
-        Nyon::ECS::EntityID objectId;
-        float size = 15.0f + m_FloatDistribution(m_RandomGenerator) * 20.0f;
-        
-        // Random shape
-        int shapeType = static_cast<int>(m_FloatDistribution(m_RandomGenerator) * 3);
-        
-        switch (shapeType)
-        {
-            case 0: // Box
-                objectId = CreateBox({x, y}, {size, size}, 1.0f, false);
-                break;
-            case 1: // Circle
-                objectId = CreateCircle({x, y}, size * 0.7f, 1.0f, false);
-                break;
-            case 2: // Capsule
-                objectId = CreateCapsule({x, y}, size * 1.5f, size * 0.5f, 1.0f, false);
-                break;
-        }
-        
-        // Random color
-        auto& collider = GetComponentStore().GetComponent<Nyon::ECS::ColliderComponent>(objectId);
-        collider.color = {
-            0.3f + m_FloatDistribution(m_RandomGenerator) * 0.7f,
-            0.3f + m_FloatDistribution(m_RandomGenerator) * 0.7f,
-            0.3f + m_FloatDistribution(m_RandomGenerator) * 0.7f
-        };
-        
-        m_GameEntities.push_back(objectId);
-        std::cout << "Spawned random object\n";
-    }
-    
-    Nyon::ECS::EntityID PhysicsDemoGame::CreateBox(const Nyon::Math::Vector2& position, 
-                                                  const Nyon::Math::Vector2& size,
-                                                  float density,
-                                                  bool isStatic)
-    {
-        auto& entityManager = GetEntityManager();
-        auto& componentStore = GetComponentStore();
-        
-        auto entityId = entityManager.CreateEntity();
-        
-        // Add components
-        componentStore.AddComponent<Nyon::ECS::TransformComponent>(entityId, Nyon::ECS::TransformComponent(position, {1.0f, 1.0f}, 0.0f));
-        componentStore.AddComponent<Nyon::ECS::PhysicsBodyComponent>(entityId, Nyon::ECS::PhysicsBodyComponent());
-        componentStore.AddComponent<Nyon::ECS::ColliderComponent>(entityId, Nyon::ECS::ColliderComponent());
-        componentStore.AddComponent<Nyon::ECS::RenderComponent>(entityId, Nyon::ECS::RenderComponent());
-        
-        // Configure collider
-        auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
-        collider.type = Nyon::ECS::ColliderComponent::ShapeType::Polygon;
-        
-        Nyon::ECS::ColliderComponent::PolygonShape boxShape;
-        float halfWidth = size.x * 0.5f;
-        float halfHeight = size.y * 0.5f;
-        
-        boxShape.vertices = {
-            {-halfWidth, -halfHeight},
-            {halfWidth, -halfHeight},
-            {halfWidth, halfHeight},
-            {-halfWidth, halfHeight}
-        };
-        
-        boxShape.CalculateProperties();
-        collider.shape = boxShape;
-        collider.density = density;
-        
-        // Configure physics body (mass and inertia from collider)
-        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
-        body.isStatic = isStatic;
-        float area = collider.CalculateArea();
-        body.mass = isStatic ? 0.0f : density * area;
-        // Inertia for unit density, then scaled by mass / area
-        float unitInertia = collider.CalculateInertiaForUnitDensity();
-        if (!isStatic && area > 0.0f)
-        {
-            body.inertia = unitInertia * (body.mass / area);
-        }
-        body.UpdateMassProperties();
-        
-        // Configure renderer
-        auto& renderer = componentStore.GetComponent<Nyon::ECS::RenderComponent>(entityId);
-        renderer.size = size;
-        renderer.origin = size * 0.5f; // Center origin
-        renderer.visible = true;
-        
-        return entityId;
-    }
-    
-    Nyon::ECS::EntityID PhysicsDemoGame::CreateCircle(const Nyon::Math::Vector2& position,
-                                                     float radius,
-                                                     float density,
-                                                     bool isStatic)
-    {
-        auto& entityManager = GetEntityManager();
-        auto& componentStore = GetComponentStore();
-        
-        auto entityId = entityManager.CreateEntity();
-        
-        componentStore.AddComponent<Nyon::ECS::TransformComponent>(entityId, Nyon::ECS::TransformComponent(position, {1.0f, 1.0f}, 0.0f));
-        componentStore.AddComponent<Nyon::ECS::PhysicsBodyComponent>(entityId, Nyon::ECS::PhysicsBodyComponent());
-        componentStore.AddComponent<Nyon::ECS::ColliderComponent>(entityId, Nyon::ECS::ColliderComponent());
-        componentStore.AddComponent<Nyon::ECS::RenderComponent>(entityId, Nyon::ECS::RenderComponent());
-        
-        auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
-        collider.type = Nyon::ECS::ColliderComponent::ShapeType::Circle;
-        collider.shape = Nyon::ECS::ColliderComponent::CircleShape{{0, 0}, radius};
-        collider.density = density;
-        
-        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
-        body.isStatic = isStatic;
-        float area = collider.CalculateArea();
-        body.mass = isStatic ? 0.0f : density * area;
-        float unitInertia = collider.CalculateInertiaForUnitDensity();
-        if (!isStatic && area > 0.0f)
-        {
-            body.inertia = unitInertia * (body.mass / area);
-        }
-        body.UpdateMassProperties();
-        
-        auto& renderer = componentStore.GetComponent<Nyon::ECS::RenderComponent>(entityId);
-        renderer.size = {radius * 2.0f, radius * 2.0f};
-        renderer.origin = {radius, radius};
-        renderer.visible = true;
-        
-        return entityId;
-    }
-    
-    Nyon::ECS::EntityID PhysicsDemoGame::CreateCapsule(const Nyon::Math::Vector2& position,
-                                                      float height,
-                                                      float radius,
-                                                      float density,
-                                                      bool isStatic)
-    {
-        auto& entityManager = GetEntityManager();
-        auto& componentStore = GetComponentStore();
-        
-        auto entityId = entityManager.CreateEntity();
-        
-        componentStore.AddComponent<Nyon::ECS::TransformComponent>(entityId, Nyon::ECS::TransformComponent(position, {1.0f, 1.0f}, 0.0f));
-        componentStore.AddComponent<Nyon::ECS::PhysicsBodyComponent>(entityId, Nyon::ECS::PhysicsBodyComponent());
-        componentStore.AddComponent<Nyon::ECS::ColliderComponent>(entityId, Nyon::ECS::ColliderComponent());
-        componentStore.AddComponent<Nyon::ECS::RenderComponent>(entityId, Nyon::ECS::RenderComponent());
-        
-        auto& collider = componentStore.GetComponent<Nyon::ECS::ColliderComponent>(entityId);
-        // For now approximate capsules with a box polygon so they participate
-        // fully in the SAT manifold generation and constraint solver.
-        collider.type = Nyon::ECS::ColliderComponent::ShapeType::Polygon;
+}
 
-        Nyon::ECS::ColliderComponent::PolygonShape poly;
-        float halfWidth = radius;
-        float halfHeight = height * 0.5f;
-        poly.vertices = {
+void PhysicsDemoGame::OnECSStart()
+{
+    CreatePhysicsWorld();
+    CreateBounds();
+    CreateStackTest();
+    CreateRampFrictionTest();
+    CreateBounceTest();
+}
+
+void PhysicsDemoGame::OnECSFixedUpdate(float deltaTime)
+{
+    // Apply timescale (slow motion / fast forward)
+    float scaledDelta = deltaTime * m_TimeScale;
+
+    HandleGlobalInput(scaledDelta);
+
+    if (m_Paused)
+        return;
+
+    // Game-specific per-tick logic could go here (e.g., scripted forces),
+    // but this demo mainly relies on the physics pipeline + input-driven spawning.
+}
+
+void PhysicsDemoGame::OnECSUpdate(float /*deltaTime*/)
+{
+    // Optional: could display HUD / statistics here by querying PhysicsWorldComponent profile/counters.
+}
+
+void PhysicsDemoGame::CreatePhysicsWorld()
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+    auto& systems    = GetSystemManager();
+
+    // Create world entity with global physics settings
+    ECS::EntityID worldEntity = entities.CreateEntity();
+
+    ECS::PhysicsWorldComponent world;
+    world.gravity = { 0.0f, 980.0f };          // Pixels / s^2, y-positive down
+    world.timeStep = 1.0f / 60.0f;
+    world.velocityIterations = 8;
+    world.positionIterations = 3;
+    world.subStepCount = 4;
+    world.enableSleep = true;
+    world.enableWarmStarting = true;
+    world.enableContinuous = true;
+
+    // Enable rich debug visualization: shapes, contacts, etc.
+    world.SetDebugDraw(
+        /*shapes*/   true,
+        /*joints*/   false,
+        /*aabbs*/    false,
+        /*contacts*/ true,
+        /*islands*/  false
+    );
+
+    components.AddComponent(worldEntity, std::move(world));
+
+    // Register physics integration system (simplified physics pipeline)
+    systems.AddSystem(std::make_unique<ECS::PhysicsIntegrationSystem>());
+}
+
+void PhysicsDemoGame::CreateBounds()
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+
+    // Static border walls around the play area to keep bodies on screen.
+    const float width  = 1280.0f;
+    const float height = 720.0f;
+    const float thickness = 40.0f;
+
+    using Nyon::Math::Vector2;
+
+    auto createWall = [&](const Vector2& center, const Vector2& halfExtents)
+    {
+        ECS::EntityID wall = entities.CreateEntity();
+
+        ECS::TransformComponent t;
+        t.position = center;
+
+        ECS::PhysicsBodyComponent body;
+        body.isStatic = true;
+        body.UpdateMassProperties();
+
+        ECS::ColliderComponent::PolygonShape shape({
+            {-halfExtents.x, -halfExtents.y},
+            { halfExtents.x, -halfExtents.y},
+            { halfExtents.x,  halfExtents.y},
+            {-halfExtents.x,  halfExtents.y}
+        });
+
+        ECS::ColliderComponent collider(shape);
+        collider.material.friction    = 0.8f;
+        collider.material.restitution = 0.1f;
+
+        components.AddComponent(wall, std::move(t));
+        components.AddComponent(wall, std::move(body));
+        components.AddComponent(wall, std::move(collider));
+    };
+
+    // Floor
+    createWall({width * 0.5f, height + thickness * 0.5f}, {width * 0.5f, thickness * 0.5f});
+    // Ceiling
+    createWall({width * 0.5f, -thickness * 0.5f},        {width * 0.5f, thickness * 0.5f});
+    // Left wall
+    createWall({-thickness * 0.5f, height * 0.5f},       {thickness * 0.5f, height * 0.5f});
+    // Right wall
+    createWall({width + thickness * 0.5f, height * 0.5f},{thickness * 0.5f, height * 0.5f});
+}
+
+void PhysicsDemoGame::CreateStackTest()
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+
+    using Nyon::Math::Vector2;
+
+    const int columns = 6;
+    const int rows    = 8;
+    const float boxSize = 35.0f;
+    const float startX  = 350.0f;
+    const float startY  = 650.0f;
+
+    for (int x = 0; x < columns; ++x)
+    {
+        for (int y = 0; y < rows; ++y)
+        {
+            ECS::EntityID box = entities.CreateEntity();
+
+            ECS::TransformComponent t;
+            t.position = {
+                startX + x * (boxSize * 2.2f),
+                startY - y * (boxSize * 2.2f)
+            };
+
+            ECS::PhysicsBodyComponent body;
+            body.mass = 1.0f;
+            body.UpdateMassProperties();
+
+            ECS::ColliderComponent::PolygonShape shape({
+                {-boxSize, -boxSize},
+                { boxSize, -boxSize},
+                { boxSize,  boxSize},
+                {-boxSize,  boxSize}
+            });
+
+            ECS::ColliderComponent collider(shape);
+            collider.material.friction    = 0.4f;
+            collider.material.restitution = 0.0f;
+
+            components.AddComponent(box, std::move(t));
+            components.AddComponent(box, std::move(body));
+            components.AddComponent(box, std::move(collider));
+        }
+    }
+}
+
+void PhysicsDemoGame::CreateRampFrictionTest()
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+
+    using Nyon::Math::Vector2;
+
+    // Create an inclined static ramp
+    {
+        ECS::EntityID ramp = entities.CreateEntity();
+
+        ECS::TransformComponent t;
+        t.position = {950.0f, 550.0f};
+        t.rotation = -0.35f; // Slight incline
+
+        ECS::PhysicsBodyComponent body;
+        body.isStatic = true;
+        body.UpdateMassProperties();
+
+        float halfWidth  = 250.0f;
+        float halfHeight = 15.0f;
+
+        ECS::ColliderComponent::PolygonShape shape({
             {-halfWidth, -halfHeight},
             { halfWidth, -halfHeight},
             { halfWidth,  halfHeight},
             {-halfWidth,  halfHeight}
-        };
-        poly.CalculateProperties();
-        collider.shape = poly;
-        collider.density = density;
-        
-        auto& body = componentStore.GetComponent<Nyon::ECS::PhysicsBodyComponent>(entityId);
-        body.isStatic = isStatic;
-        float area = collider.CalculateArea();
-        body.mass = isStatic ? 0.0f : density * area;
-        float unitInertia = collider.CalculateInertiaForUnitDensity();
-        if (!isStatic && area > 0.0f)
-        {
-            body.inertia = unitInertia * (body.mass / area);
-        }
+        });
+
+        ECS::ColliderComponent collider(shape);
+        collider.material.friction    = 0.8f; // High friction ramp surface
+        collider.material.restitution = 0.0f;
+
+        components.AddComponent(ramp, std::move(t));
+        components.AddComponent(ramp, std::move(body));
+        components.AddComponent(ramp, std::move(collider));
+    }
+
+    // Drop boxes with varying friction on the ramp
+    const int boxCount = 5;
+    const float baseX  = 850.0f;
+    const float baseY  = 350.0f;
+    const float spacing = 60.0f;
+
+    for (int i = 0; i < boxCount; ++i)
+    {
+        float friction = 0.1f + 0.2f * static_cast<float>(i); // 0.1, 0.3, 0.5, ...
+        float restitution = 0.0f;
+
+        ECS::EntityID box = entities.CreateEntity();
+
+        ECS::TransformComponent t;
+        t.position = {baseX + i * spacing, baseY};
+
+        ECS::PhysicsBodyComponent body;
+        body.mass = 1.0f;
         body.UpdateMassProperties();
-        
-        auto& renderer = componentStore.GetComponent<Nyon::ECS::RenderComponent>(entityId);
-        renderer.size = {radius * 2.0f, height + radius * 2.0f};
-        renderer.origin = {radius, (height + radius * 2.0f) * 0.5f};
-        renderer.visible = true;
-        
-        return entityId;
+
+        float half = 20.0f;
+        ECS::ColliderComponent::PolygonShape shape({
+            {-half, -half},
+            { half, -half},
+            { half,  half},
+            {-half,  half}
+        });
+
+        ECS::ColliderComponent collider(shape);
+        collider.material.friction    = friction;
+        collider.material.restitution = restitution;
+
+        components.AddComponent(box, std::move(t));
+        components.AddComponent(box, std::move(body));
+        components.AddComponent(box, std::move(collider));
     }
 }
+
+void PhysicsDemoGame::CreateBounceTest()
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+
+    using Nyon::Math::Vector2;
+
+    const int ballCount = 6;
+    const float baseX   = 200.0f;
+    const float baseY   = 100.0f;
+    const float spacing = 80.0f;
+    const float radius  = 20.0f;
+
+    for (int i = 0; i < ballCount; ++i)
+    {
+        float restitution = 0.1f * static_cast<float>(i); // 0.0, 0.1, ..., 0.5
+        float friction    = 0.2f;
+
+        ECS::EntityID ball = entities.CreateEntity();
+
+        ECS::TransformComponent t;
+        t.position = {baseX + i * spacing, baseY};
+
+        ECS::PhysicsBodyComponent body;
+        body.mass = 1.0f;
+        body.UpdateMassProperties();
+        body.isBullet = (i == ballCount - 1); // Last ball as high-speed bullet candidate
+
+        ECS::ColliderComponent collider(radius);
+        collider.material.friction    = friction;
+        collider.material.restitution = restitution;
+
+        components.AddComponent(ball, std::move(t));
+        components.AddComponent(ball, std::move(body));
+        components.AddComponent(ball, std::move(collider));
+    }
+}
+
+void PhysicsDemoGame::HandleGlobalInput(float /*deltaTime*/)
+{
+    using Nyon::Utils::InputManager;
+
+    // Pause / resume
+    if (InputManager::IsKeyPressed(GLFW_KEY_P))
+    {
+        m_Paused = !m_Paused;
+    }
+
+    // Slow motion toggle
+    if (InputManager::IsKeyPressed(GLFW_KEY_1))
+    {
+        m_TimeScale = 0.25f;
+    }
+    if (InputManager::IsKeyPressed(GLFW_KEY_2))
+    {
+        m_TimeScale = 1.0f;
+    }
+    if (InputManager::IsKeyPressed(GLFW_KEY_3))
+    {
+        m_TimeScale = 2.0f;
+    }
+
+    // Spawn demo shapes at mouse position
+    if (InputManager::IsMousePressed(GLFW_MOUSE_BUTTON_LEFT))
+    {
+        double mx = 0.0, my = 0.0;
+        InputManager::GetMousePosition(mx, my);
+        SpawnBoxAt(static_cast<float>(mx), static_cast<float>(my), 25.0f, 0.2f, 0.5f);
+    }
+    if (InputManager::IsMousePressed(GLFW_MOUSE_BUTTON_RIGHT))
+    {
+        double mx = 0.0, my = 0.0;
+        InputManager::GetMousePosition(mx, my);
+        SpawnBallAt(static_cast<float>(mx), static_cast<float>(my), 18.0f, 0.6f, 0.2f);
+    }
+}
+
+void PhysicsDemoGame::SpawnBoxAt(float x, float y, float size, float restitution, float friction)
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+
+    ECS::EntityID box = entities.CreateEntity();
+
+    ECS::TransformComponent t;
+    t.position = {x, y};
+
+    ECS::PhysicsBodyComponent body;
+    body.mass = 1.0f;
+    body.UpdateMassProperties();
+
+    float half = size;
+    ECS::ColliderComponent::PolygonShape shape({
+        {-half, -half},
+        { half, -half},
+        { half,  half},
+        {-half,  half}
+    });
+
+    ECS::ColliderComponent collider(shape);
+    collider.material.friction    = friction;
+    collider.material.restitution = restitution;
+
+    components.AddComponent(box, std::move(t));
+    components.AddComponent(box, std::move(body));
+    components.AddComponent(box, std::move(collider));
+}
+
+void PhysicsDemoGame::SpawnBallAt(float x, float y, float radius, float restitution, float friction)
+{
+    auto& entities   = GetEntityManager();
+    auto& components = GetComponentStore();
+
+    ECS::EntityID ball = entities.CreateEntity();
+
+    ECS::TransformComponent t;
+    t.position = {x, y};
+
+    ECS::PhysicsBodyComponent body;
+    body.mass = 1.0f;
+    body.UpdateMassProperties();
+
+    ECS::ColliderComponent collider(radius);
+    collider.material.friction    = friction;
+    collider.material.restitution = restitution;
+
+    components.AddComponent(ball, std::move(t));
+    components.AddComponent(ball, std::move(body));
+    components.AddComponent(ball, std::move(collider));
+}
+

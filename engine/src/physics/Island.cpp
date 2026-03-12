@@ -1,10 +1,11 @@
 #include "nyon/physics/Island.h"
 #include "nyon/ecs/components/JointComponent.h"
+#include "nyon/ecs/components/PhysicsWorldComponent.h"
 #include <algorithm>
-#include <iostream>
 
+// Debug logging macro - only output in debug builds
 #ifdef _DEBUG
-#define NYON_DEBUG_LOG(x) std::cout << "[Island] " << x << std::endl
+#define NYON_DEBUG_LOG(x) std::cerr << "[Island] " << x << std::endl
 #else
 #define NYON_DEBUG_LOG(x)
 #endif
@@ -40,33 +41,27 @@ namespace Nyon::Physics
     {
         m_ContactGraph.clear();
         
-        // For simplicity, we'll assume all active dynamic bodies can potentially contact each other
-        // In a real implementation, this would come from the collision detection system
-        for (size_t i = 0; i < activeEntities.size(); ++i)
+        // Build graph from active contact manifolds, not all possible body pairs
+        // This ensures only bodies actually in contact are connected in the graph
+        const auto& worldEntities = m_ComponentStore.GetEntitiesWithComponent<ECS::PhysicsWorldComponent>();
+        if (!worldEntities.empty())
         {
-            if (!m_ComponentStore.HasComponent<ECS::PhysicsBodyComponent>(activeEntities[i]))
-                continue;
-                
-            const auto& bodyA = m_ComponentStore.GetComponent<ECS::PhysicsBodyComponent>(activeEntities[i]);
-            if (bodyA.isStatic)
-                continue;
-                
-            for (size_t j = i + 1; j < activeEntities.size(); ++j)
+            const auto& physicsWorld = m_ComponentStore.GetComponent<ECS::PhysicsWorldComponent>(worldEntities[0]);
+            for (const auto& manifold : physicsWorld.contactManifolds)
             {
-                if (!m_ComponentStore.HasComponent<ECS::PhysicsBodyComponent>(activeEntities[j]))
+                if (!manifold.touching)
                     continue;
-                    
-                const auto& bodyB = m_ComponentStore.GetComponent<ECS::PhysicsBodyComponent>(activeEntities[j]);
-                if (bodyB.isStatic)
-                    continue;
-                
-                // Add bidirectional connections (potential contact)
-                m_ContactGraph[activeEntities[i]].push_back(activeEntities[j]);
-                m_ContactGraph[activeEntities[j]].push_back(activeEntities[i]);
+
+                ECS::EntityID a = manifold.entityIdA;
+                ECS::EntityID b = manifold.entityIdB;
+
+                // Add bidirectional connections for touching contacts
+                m_ContactGraph[a].push_back(b);
+                m_ContactGraph[b].push_back(a);
             }
         }
         
-        NYON_DEBUG_LOG("Built contact graph with " << m_ContactGraph.size() << " bodies");
+        NYON_DEBUG_LOG("Built contact graph with " << m_ContactGraph.size() << " bodies from active manifolds");
     }
 
     void IslandManager::BuildJointGraph()
@@ -167,15 +162,18 @@ namespace Nyon::Physics
         });
         
         // Separate awake and sleeping islands
-        for (auto& island : m_AllIslands)
+        // IMPORTANT: Don't use std::move here - we need to keep m_AllIslands valid because
+        // m_BodyIslandMap contains indices into it. Instead, we maintain parallel lists.
+        for (size_t i = 0; i < m_AllIslands.size(); ++i)
         {
+            auto& island = m_AllIslands[i];
             if (island.isAwake)
             {
-                m_AwakeIslands.push_back(std::move(island));
+                m_AwakeIslands.push_back(island);  // Copy, not move
             }
             else
             {
-                m_SleepingIslands.push_back(std::move(island));
+                m_SleepingIslands.push_back(island);  // Copy, not move
             }
         }
         
@@ -189,7 +187,10 @@ namespace Nyon::Physics
         queue.push(startBody);
         m_VisitedBodies.insert(startBody);
         island.bodyIds.push_back(startBody);
-        m_BodyIslandMap[startBody] = m_AllIslands.size(); // Index of current island being built
+        
+        // Capture island index explicitly BEFORE push_back to avoid stale reference
+        size_t islandIndex = m_AllIslands.size();
+        m_BodyIslandMap[startBody] = islandIndex;
         
         while (!queue.empty())
         {
@@ -207,7 +208,7 @@ namespace Nyon::Physics
                         queue.push(connectedBody);
                         m_VisitedBodies.insert(connectedBody);
                         island.bodyIds.push_back(connectedBody);
-                        m_BodyIslandMap[connectedBody] = m_AllIslands.size();
+                        m_BodyIslandMap[connectedBody] = islandIndex; // Use captured index
                     }
                 }
             }
@@ -233,14 +234,14 @@ namespace Nyon::Physics
                 continue;
                 
             bool belowThreshold = true;
-            float maxVelocity = 0.0f;
+            float maxVelocitySq = 0.0f;
             
             for (const auto& bodyId : island.bodyIds)
             {
-                float velocity = GetBodySleepVelocity(bodyId);
-                maxVelocity = std::max(maxVelocity, velocity);
+                float velocitySq = GetBodySleepVelocity(bodyId);
+                maxVelocitySq = std::max(maxVelocitySq, velocitySq);
                 
-                if (velocity > SLEEP_THRESHOLD)
+                if (velocitySq > SLEEP_THRESHOLD * SLEEP_THRESHOLD)
                 {
                     belowThreshold = false;
                     break;
@@ -250,7 +251,7 @@ namespace Nyon::Physics
             if (belowThreshold)
             {
                 island.sleepTimer += deltaTime;
-                NYON_DEBUG_LOG("Island sleep timer: " << island.sleepTimer << " (max velocity: " << maxVelocity << ")");
+                NYON_DEBUG_LOG("Island sleep timer: " << island.sleepTimer << " (max velocity sq: " << maxVelocitySq << ")");
             }
             else
             {
@@ -298,19 +299,10 @@ namespace Nyon::Physics
         // An island should sleep if all bodies are below sleep thresholds
         for (const auto& bodyId : island.bodyIds)
         {
-            if (GetBodySleepVelocity(bodyId) > SLEEP_THRESHOLD)
+            // Check combined linear + angular velocity (squared)
+            if (GetBodySleepVelocity(bodyId) > SLEEP_THRESHOLD * SLEEP_THRESHOLD)
             {
                 return false;
-            }
-            
-            // Check angular velocity too
-            if (m_ComponentStore.HasComponent<ECS::PhysicsBodyComponent>(bodyId))
-            {
-                const auto& body = m_ComponentStore.GetComponent<ECS::PhysicsBodyComponent>(bodyId);
-                if (std::abs(body.angularVelocity) > ANGULAR_SLEEP_THRESHOLD)
-                {
-                    return false;
-                }
             }
         }
         return true;
@@ -371,7 +363,26 @@ namespace Nyon::Physics
             return 0.0f;
             
         const auto& body = m_ComponentStore.GetComponent<ECS::PhysicsBodyComponent>(bodyId);
-        return body.velocity.Length();
+        
+        // Compute body's half-diagonal extent for angular velocity scaling
+        // Use bounding box diagonal as approximation
+        float extent = 1.0f; // Default extent
+        if (m_ComponentStore.HasComponent<ECS::ColliderComponent>(bodyId))
+        {
+            const auto& collider = m_ComponentStore.GetComponent<ECS::ColliderComponent>(bodyId);
+            // Get approximate extent from collider bounds
+            // extent = collider.localAABB.upperBound.Distance(collider.localAABB.lowerBound) * 0.5f;
+            // TODO: Calculate extent based on shape type and size
+        }
+        
+        // Combined linear and angular velocity metric
+        // Angular velocity contribution scaled by body extent (tangential velocity at extremity)
+        float linearVelSq = body.velocity.LengthSquared();
+        float angularVel = std::abs(body.angularVelocity);
+        float tangentialVel = angularVel * extent;
+        
+        // Return squared magnitude to avoid sqrt in comparisons
+        return linearVelSq + tangentialVel * tangentialVel;
     }
 
     bool IslandManager::IsBodyEligibleForSleeping(ECS::EntityID bodyId) const

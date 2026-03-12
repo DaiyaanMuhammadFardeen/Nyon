@@ -94,10 +94,10 @@ namespace Nyon::Physics
             uint32_t entityIdB,
             uint32_t shapeIdA,
             uint32_t shapeIdB,
-            const ColliderComponent::CircleShape& circleA,
-            const ColliderComponent::CircleShape& circleB,
-            const TransformComponent& transformA,
-            const TransformComponent& transformB,
+            const Nyon::ECS::ColliderComponent::CircleShape& circleA,
+            const Nyon::ECS::ColliderComponent::CircleShape& circleB,
+            const Nyon::ECS::TransformComponent& transformA,
+            const Nyon::ECS::TransformComponent& transformB,
             float speculativeDistance = 0.02f);
         
         /**
@@ -121,10 +121,10 @@ namespace Nyon::Physics
             uint32_t entityIdB,
             uint32_t shapeIdA,
             uint32_t shapeIdB,
-            const ColliderComponent::CircleShape& circle,
-            const ColliderComponent::PolygonShape& polygon,
-            const TransformComponent& transformA,
-            const TransformComponent& transformB,
+            const Nyon::ECS::ColliderComponent::CircleShape& circle,
+            const Nyon::ECS::ColliderComponent::PolygonShape& polygon,
+            const Nyon::ECS::TransformComponent& transformA,
+            const Nyon::ECS::TransformComponent& transformB,
             float speculativeDistance = 0.02f);
         
         /**
@@ -149,10 +149,10 @@ namespace Nyon::Physics
             uint32_t entityIdB,
             uint32_t shapeIdA,
             uint32_t shapeIdB,
-            const ColliderComponent::PolygonShape& polygonA,
-            const ColliderComponent::PolygonShape& polygonB,
-            const TransformComponent& transformA,
-            const TransformComponent& transformB,
+            const Nyon::ECS::ColliderComponent::PolygonShape& polygonA,
+            const Nyon::ECS::ColliderComponent::PolygonShape& polygonB,
+            const Nyon::ECS::TransformComponent& transformA,
+            const Nyon::ECS::TransformComponent& transformB,
             float speculativeDistance = 0.02f);
         
         /**
@@ -172,13 +172,13 @@ namespace Nyon::Physics
         ContactManifold DetectCapsuleCollision(
             uint32_t entityIdA,
             uint32_t entityIdB,
-            const ColliderComponent::CapsuleShape& capsule,
+            const Nyon::ECS::ColliderComponent::CapsuleShape& capsule,
             const std::variant<
-                ColliderComponent::PolygonShape,
-                ColliderComponent::CircleShape,
-                ColliderComponent::CapsuleShape>& otherCollider,
-            const TransformComponent& transformA,
-            const TransformComponent& transformB,
+                Nyon::ECS::ColliderComponent::PolygonShape,
+                Nyon::ECS::ColliderComponent::CircleShape,
+                Nyon::ECS::ColliderComponent::CapsuleShape>& otherCollider,
+            const Nyon::ECS::TransformComponent& transformA,
+            const Nyon::ECS::TransformComponent& transformB,
             float speculativeDistance = 0.02f);
         
         /**
@@ -187,8 +187,8 @@ namespace Nyon::Physics
          * Helper function to transform shapes to world space.
          */
         static void ComputePolygonWorld(
-            const ColliderComponent::PolygonShape& polygon,
-            const TransformComponent& transform,
+            const Nyon::ECS::ColliderComponent::PolygonShape& polygon,
+            const Nyon::ECS::TransformComponent& transform,
             std::vector<Math::Vector2>& outVertices,
             std::vector<Math::Vector2>& outNormals);
         
@@ -196,16 +196,16 @@ namespace Nyon::Physics
          * @brief Compute circle center in world space
          */
         static void ComputeCircleCenters(
-            const ColliderComponent::CircleShape& circle,
-            const TransformComponent& transform,
+            const Nyon::ECS::ColliderComponent::CircleShape& circle,
+            const Nyon::ECS::TransformComponent& transform,
             Math::Vector2& outCenter);
         
         /**
          * @brief Compute capsule endpoints in world space
          */
         static void ComputeCapsuleEndpoints(
-            const ColliderComponent::CapsuleShape& capsule,
-            const TransformComponent& transform,
+            const Nyon::ECS::ColliderComponent::CapsuleShape& capsule,
+            const Nyon::ECS::TransformComponent& transform,
             Math::Vector2& outStart,
             Math::Vector2& outEnd);
         

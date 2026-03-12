@@ -25,9 +25,9 @@ namespace Nyon::Math
         // Unary minus
         Vector3 operator-() const { return Vector3(-x, -y, -z); }
 
-        float Length() const { return sqrt(x * x + y * y + z * z); }
-        float LengthSquared() const { return x * x + y * y + z * z; }
-        Vector3 Normalize() const 
+        [[nodiscard]] float Length() const { return std::sqrt(x * x + y * y + z * z); }
+        [[nodiscard]] float LengthSquared() const { return x * x + y * y + z * z; }
+        [[nodiscard]] Vector3 Normalize() const 
         { 
             float len = Length();
             if (len > 0.0f) return Vector3(x / len, y / len, z / len);
@@ -35,7 +35,7 @@ namespace Nyon::Math
         }
 
         // Cross product
-        Vector3 Cross(const Vector3& other) const
+        [[nodiscard]] Vector3 Cross(const Vector3& other) const
         {
             return Vector3(
                 y * other.z - z * other.y,
@@ -45,7 +45,7 @@ namespace Nyon::Math
         }
 
         // Dot product
-        float Dot(const Vector3& other) const
+        [[nodiscard]] float Dot(const Vector3& other) const
         {
             return x * other.x + y * other.y + z * other.z;
         }

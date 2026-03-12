@@ -42,9 +42,9 @@ namespace Nyon::Graphics
                 DrawSegmentShape(collider.GetSegment(), transform, color);
                 break;
                 
-            case ECS::ColliderComponent::ShapeType::Chain:
-                DrawChainShape(collider.GetChain(), transform, color);
-                break;
+            // case ECS::ColliderComponent::ShapeType::Chain:
+            //     DrawChainShape(collider.GetChain(), transform, color);
+            //     break;
                 
             default:
                 break;
@@ -242,7 +242,7 @@ namespace Nyon::Graphics
         Renderer2D::DrawChain(worldVertices, color, chain.radius > 0.0f ? chain.radius * 2.0f : 1.0f, chain.isLoop);
     }
     
-    void PhysicsDebugRenderer::DrawManifold(const Physics::ContactManifold& manifold)
+    void PhysicsDebugRenderer::DrawManifold(const ECS::ContactManifold& manifold)
     {
         if (!HasFlag(m_ActiveFlags, DebugRenderFlag::Manifolds) || !HasFlag(m_ActiveFlags, DebugRenderFlag::Contacts))
             return;

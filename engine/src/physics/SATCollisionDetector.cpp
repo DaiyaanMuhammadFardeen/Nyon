@@ -10,24 +10,24 @@
 namespace Nyon::Physics
 {
     void SATCollisionDetector::ComputePolygonWorld(
-        const ColliderComponent::PolygonShape& polygon,
-        const TransformComponent& transform,
+        const ECS::ColliderComponent::PolygonShape& polygon,
+        const ECS::TransformComponent& transform,
         std::vector<Math::Vector2>& outVertices,
         std::vector<Math::Vector2>& outNormals)
     {
         outVertices.clear();
         outNormals.clear();
         
-        if (polygon.empty())
+        if (polygon.vertices.empty())
             return;
         
         // Compute rotation matrix
         float cosA = std::cos(transform.rotation);
         float sinA = std::sin(transform.rotation);
         
-        for (size_t i = 0; i < polygon.size(); ++i)
+        for (size_t i = 0; i < polygon.vertices.size(); ++i)
         {
-            const auto& v = polygon[i];
+            const auto& v = polygon.vertices[i];
             
             // Rotate and translate
             Math::Vector2 worldPoint;
@@ -57,29 +57,29 @@ namespace Nyon::Physics
     }
     
     void SATCollisionDetector::ComputeCircleCenters(
-        const ColliderComponent::CircleShape& circle,
-        const TransformComponent& transform,
+        const ECS::ColliderComponent::CircleShape& circle,
+        const ECS::TransformComponent& transform,
         Math::Vector2& outCenter)
     {
         outCenter = transform.position + circle.center;
     }
     
     void SATCollisionDetector::ComputeCapsuleEndpoints(
-        const ColliderComponent::CapsuleShape& capsule,
-        const TransformComponent& transform,
+        const ECS::ColliderComponent::CapsuleShape& capsule,
+        const ECS::TransformComponent& transform,
         Math::Vector2& outStart,
         Math::Vector2& outEnd)
     {
         float cosA = std::cos(transform.rotation);
         float sinA = std::sin(transform.rotation);
         
-        // Transform start point
-        outStart.x = transform.position.x + (capsule.start.x * cosA - capsule.start.y * sinA);
-        outStart.y = transform.position.y + (capsule.start.x * sinA + capsule.start.y * cosA);
+        // Transform first capsule endpoint
+        outStart.x = transform.position.x + (capsule.center1.x * cosA - capsule.center1.y * sinA);
+        outStart.y = transform.position.y + (capsule.center1.x * sinA + capsule.center1.y * cosA);
         
-        // Transform end point
-        outEnd.x = transform.position.x + (capsule.end.x * cosA - capsule.end.y * sinA);
-        outEnd.y = transform.position.y + (capsule.end.x * sinA + capsule.end.y * cosA);
+        // Transform second capsule endpoint
+        outEnd.x = transform.position.x + (capsule.center2.x * cosA - capsule.center2.y * sinA);
+        outEnd.y = transform.position.y + (capsule.center2.x * sinA + capsule.center2.y * cosA);
     }
     
     ContactManifold SATCollisionDetector::DetectCircleCircle(
@@ -87,10 +87,10 @@ namespace Nyon::Physics
         uint32_t entityIdB,
         uint32_t shapeIdA,
         uint32_t shapeIdB,
-        const ColliderComponent::CircleShape& circleA,
-        const ColliderComponent::CircleShape& circleB,
-        const TransformComponent& transformA,
-        const TransformComponent& transformB,
+        const ECS::ColliderComponent::CircleShape& circleA,
+        const ECS::ColliderComponent::CircleShape& circleB,
+        const ECS::TransformComponent& transformA,
+        const ECS::TransformComponent& transformB,
         float speculativeDistance)
     {
         ContactManifold manifold;
@@ -148,10 +148,10 @@ namespace Nyon::Physics
         uint32_t entityIdB,
         uint32_t shapeIdA,
         uint32_t shapeIdB,
-        const ColliderComponent::CircleShape& circle,
-        const ColliderComponent::PolygonShape& polygon,
-        const TransformComponent& transformA,
-        const TransformComponent& transformB,
+        const ECS::ColliderComponent::CircleShape& circle,
+        const ECS::ColliderComponent::PolygonShape& polygon,
+        const ECS::TransformComponent& transformA,
+        const ECS::TransformComponent& transformB,
         float speculativeDistance)
     {
         ContactManifold manifold;
@@ -216,10 +216,10 @@ namespace Nyon::Physics
         uint32_t entityIdB,
         uint32_t shapeIdA,
         uint32_t shapeIdB,
-        const ColliderComponent::PolygonShape& polygonA,
-        const ColliderComponent::PolygonShape& polygonB,
-        const TransformComponent& transformA,
-        const TransformComponent& transformB,
+        const ECS::ColliderComponent::PolygonShape& polygonA,
+        const ECS::ColliderComponent::PolygonShape& polygonB,
+        const ECS::TransformComponent& transformA,
+        const ECS::TransformComponent& transformB,
         float speculativeDistance)
     {
         ContactManifold manifold;
@@ -389,13 +389,13 @@ namespace Nyon::Physics
     ContactManifold SATCollisionDetector::DetectCapsuleCollision(
         uint32_t entityIdA,
         uint32_t entityIdB,
-        const ColliderComponent::CapsuleShape& capsule,
+        const ECS::ColliderComponent::CapsuleShape& capsule,
         const std::variant<
-            ColliderComponent::PolygonShape,
-            ColliderComponent::CircleShape,
-            ColliderComponent::CapsuleShape>& otherCollider,
-        const TransformComponent& transformA,
-        const TransformComponent& transformB,
+            ECS::ColliderComponent::PolygonShape,
+            ECS::ColliderComponent::CircleShape,
+            ECS::ColliderComponent::CapsuleShape>& otherCollider,
+        const ECS::TransformComponent& transformA,
+        const ECS::TransformComponent& transformB,
         float speculativeDistance)
     {
         ContactManifold manifold;
@@ -407,9 +407,9 @@ namespace Nyon::Physics
         ComputeCapsuleEndpoints(capsule, transformA, capStart, capEnd);
         
         // Handle based on other collider type
-        if (std::holds_alternative<ColliderComponent::CircleShape>(otherCollider))
+        if (std::holds_alternative<ECS::ColliderComponent::CircleShape>(otherCollider))
         {
-            const auto& circle = std::get<ColliderComponent::CircleShape>(otherCollider);
+            const auto& circle = std::get<ECS::ColliderComponent::CircleShape>(otherCollider);
             Math::Vector2 circleCenter;
             ComputeCircleCenters(circle, transformB, circleCenter);
             
@@ -439,10 +439,10 @@ namespace Nyon::Physics
                 manifold.touching = true;
             }
         }
-        else if (std::holds_alternative<ColliderComponent::PolygonShape>(otherCollider))
+        else if (std::holds_alternative<ECS::ColliderComponent::PolygonShape>(otherCollider))
         {
             // Treat capsule as swept circle - test against each polygon edge
-            const auto& polygon = std::get<ColliderComponent::PolygonShape>(otherCollider);
+            const auto& polygon = std::get<ECS::ColliderComponent::PolygonShape>(otherCollider);
             std::vector<Math::Vector2> polyVerts, polyNormals;
             ComputePolygonWorld(polygon, transformB, polyVerts, polyNormals);
             
@@ -482,9 +482,9 @@ namespace Nyon::Physics
                 }
             }
         }
-        else if (std::holds_alternative<ColliderComponent::CapsuleShape>(otherCollider))
+        else if (std::holds_alternative<ECS::ColliderComponent::CapsuleShape>(otherCollider))
         {
-            const auto& otherCapsule = std::get<ColliderComponent::CapsuleShape>(otherCollider);
+            const auto& otherCapsule = std::get<ECS::ColliderComponent::CapsuleShape>(otherCollider);
             Math::Vector2 otherStart, otherEnd;
             ComputeCapsuleEndpoints(otherCapsule, transformB, otherStart, otherEnd);
             
@@ -542,7 +542,13 @@ namespace Nyon::Physics
         int& incidentIndex1,
         int& incidentIndex2)
     {
-        B2_UNUSED(vertsA);
+        (void)(vertsA);
+        
+        // Invariant check: vertices and normals must have same size
+        assert(normalsB.size() == vertsB.size());
+        if (normalsB.size() != vertsB.size())
+            return;
+        
         const Math::Vector2 refNormal = normalsA[referenceIndex];
         
         // Find face on B most anti-parallel to reference normal
@@ -607,29 +613,33 @@ namespace Nyon::Physics
         float offset,
         int clipEdgeIndex)
     {
-        B2_UNUSED(clipEdgeIndex);
+        (void)(clipEdgeIndex);
         
         vOut.clear();
-        if (vIn.size() < 2)
+        if (vIn.empty())
             return;
         
-        const ContactPoint* v1 = &vIn[0];
-        const ContactPoint* v2 = &vIn[1];
-        
-        float d1 = Math::Vector2::Dot(normal, v1->position) - offset;
-        float d2 = Math::Vector2::Dot(normal, v2->position) - offset;
-        
-        // Keep points behind the plane
-        if (d1 <= 0.0f) vOut.push_back(*v1);
-        if (d2 <= 0.0f) vOut.push_back(*v2);
-        
-        // Add intersection if edge crosses plane
-        if (d1 * d2 < 0.0f && vOut.size() < 2)
+        // Full Sutherland-Hodgman clipping loop
+        for (size_t i = 0; i < vIn.size(); ++i)
         {
-            float t = d1 / (d1 - d2);
-            ContactPoint cp = *v1;
-            cp.position = v1->position + (v2->position - v1->position) * t;
-            vOut.push_back(cp);
+            const ContactPoint& c1 = vIn[i];
+            const ContactPoint& c2 = vIn[(i + 1) % vIn.size()];
+            
+            float d1 = Math::Vector2::Dot(normal, c1.position) - offset;
+            float d2 = Math::Vector2::Dot(normal, c2.position) - offset;
+            
+            // Keep point if behind or on the plane
+            if (d1 <= 0.0f)
+                vOut.push_back(c1);
+            
+            // Add intersection if edge crosses plane
+            if ((d1 < 0.0f) != (d2 < 0.0f))
+            {
+                float t = d1 / (d1 - d2);
+                ContactPoint cp = c1;
+                cp.position = c1.position + (c2.position - c1.position) * t;
+                vOut.push_back(cp);
+            }
         }
     }
     
@@ -644,9 +654,6 @@ namespace Nyon::Physics
         Math::Vector2& point,
         Math::Vector2& normal)
     {
-        B2_UNUSED(angularVelocityA);
-        B2_UNUSED(angularVelocityB);
-        
         if (manifold.points.empty())
             return false;
         
@@ -654,13 +661,22 @@ namespace Nyon::Physics
         const auto& cp = manifold.points[0];
         float distance = -cp.separation;
         
-        Math::Vector2 relativeVelocity = velocityB - velocityA;
-        float approachVelocity = -Math::Vector2::Dot(relativeVelocity, cp.normal);
+        // Account for rotational motion by conservatively expanding the query radius
+        // This handles fast-spinning bodies that would otherwise tunnel through rotation
+        // Estimate shape extents from contact point (approximate as distance from contact to body centers)
+        float extentA = 1.0f; // Approximate half-diagonal of shape A
+        float extentB = 1.0f; // Approximate half-diagonal of shape B
         
-        if (approachVelocity <= 0.0f)
-            return false;  // Moving apart
+        // Add rotational displacement to distance for conservative TOI
+        float rotationalMotionA = std::abs(angularVelocityA) * extentA * dt;
+        float rotationalMotionB = std::abs(angularVelocityB) * extentB * dt;
+        float expandedDistance = distance + rotationalMotionA + rotationalMotionB;
         
-        fraction = ConservativeAdvancement(cp.position, cp.position, velocityA, velocityB, distance);
+        // Calculate surface points on each body for conservative advancement
+        Math::Vector2 ptA = cp.position - cp.normal * (cp.separation * 0.5f); // On A surface
+        Math::Vector2 ptB = cp.position + cp.normal * (cp.separation * 0.5f); // On B surface
+        
+        fraction = ConservativeAdvancement(ptA, ptB, velocityA, velocityB, expandedDistance);
         
         if (fraction >= 0.0f && fraction <= 1.0f)
         {
