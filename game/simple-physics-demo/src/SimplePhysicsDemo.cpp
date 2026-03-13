@@ -10,6 +10,8 @@
 #include "nyon/ecs/components/ColliderComponent.h"
 #include "nyon/ecs/components/RenderComponent.h"
 
+#include <iostream>
+
 using namespace Nyon;
 
 SimplePhysicsDemo::SimplePhysicsDemo()
@@ -26,7 +28,7 @@ void SimplePhysicsDemo::OnECSStart()
     ECS::EntityID worldEntity = entities.CreateEntity();
     
     ECS::PhysicsWorldComponent world;
-    world.gravity = { 0.0f, 980.0f };          // Y-positive down (screen coordinates)
+    world.gravity = { 0.0f, -980.0f };          // Y-negative up (standard physics coordinates)
     world.timeStep = 1.0f / 60.0f;
     world.velocityIterations = 8;
     world.positionIterations = 3;
@@ -53,7 +55,33 @@ void SimplePhysicsDemo::OnECSStart()
 
 void SimplePhysicsDemo::OnECSFixedUpdate(float deltaTime)
 {
-    // No additional game logic needed for this simple demo
+    // Check for collisions and break loop if detected
+    if (!m_CollisionDetected)
+    {
+        auto& components = GetComponentStore();
+        
+        // Get physics world to access contact manifolds
+        auto& worldEntities = components.GetEntitiesWithComponent<ECS::PhysicsWorldComponent>();
+        if (!worldEntities.empty())
+        {
+            const auto& physicsWorld = components.GetComponent<ECS::PhysicsWorldComponent>(worldEntities[0]);
+            
+            // Check if any contacts are touching (collision detected)
+            if (!physicsWorld.contactManifolds.empty())
+            {
+                for (const auto& manifold : physicsWorld.contactManifolds)
+                {
+                    if (manifold.touching)
+                    {
+                        m_CollisionDetected = true;
+                        std::cerr << "[DEMO] Collision detected! Breaking loop..." << std::endl;
+                        Close();  // Break the main loop
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 void SimplePhysicsDemo::CreatePlatform()
@@ -65,7 +93,7 @@ void SimplePhysicsDemo::CreatePlatform()
     ECS::EntityID platform = entities.CreateEntity();
     
     ECS::TransformComponent t;
-    t.position = { 640.0f, 650.0f };  // Center horizontally, near bottom
+    t.position = { 640.0f, 70.0f };  // Center horizontally, near bottom (Y-up: small Y = bottom)
     
     ECS::PhysicsBodyComponent body;
     body.isStatic = true;  // Static body - doesn't move
@@ -104,7 +132,7 @@ void SimplePhysicsDemo::CreateFallingBox()
     ECS::EntityID box = entities.CreateEntity();
     
     ECS::TransformComponent t;
-    t.position = { 640.0f, 200.0f };  // Start in the air, above platform
+    t.position = { 640.0f, 500.0f };  // Start in the air, above platform (Y-up: large Y = top)
     
     ECS::PhysicsBodyComponent body;
     body.mass = 2.0f;  // Dynamic body with mass

@@ -8,6 +8,7 @@
 // Forward declarations
 namespace Nyon::ECS {
     class DebugRenderSystem;
+    class RenderSystem;
 }
 #include <memory>
 
@@ -52,5 +53,6 @@ namespace Nyon
         
         bool m_ECSInitialized;
         ECS::DebugRenderSystem* m_DebugRenderSystem = nullptr;  // Cached pointer to avoid dynamic_cast every frame
+        std::unique_ptr<ECS::RenderSystem> m_RenderSystem;  // Separate render system - only called during interpolation
     };
 }

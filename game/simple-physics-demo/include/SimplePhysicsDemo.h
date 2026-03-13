@@ -14,4 +14,6 @@ protected:
 private:
     void CreatePlatform();
     void CreateFallingBox();
+    
+    bool m_CollisionDetected = false;  // Track if collision has occurred
 };

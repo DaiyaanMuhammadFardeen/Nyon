@@ -291,10 +291,11 @@ namespace Nyon::Graphics
         
         void UpdateProjectionMatrix(float screenWidth, float screenHeight)
         {
+            // Y-up coordinate system: bottom=0, top=screenHeight/zoom
             float left = 0.0f;
             float right = screenWidth / CurrentCamera.zoom;
-            float bottom = screenHeight / CurrentCamera.zoom;
-            float top = 0.0f;
+            float bottom = 0.0f;
+            float top = screenHeight / CurrentCamera.zoom;
             
             ProjectionMatrix = glm::ortho(left, right, bottom, top, 
                                          CurrentCamera.nearPlane, CurrentCamera.farPlane);

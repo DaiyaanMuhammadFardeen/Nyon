@@ -44,8 +44,12 @@ namespace Nyon
         // NOW initialize ECS systems in proper order (after game has created required components)
         m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
         m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
-        m_SystemManager.AddSystem(std::make_unique<ECS::RenderSystem>());
+        // RenderSystem is NOT added to SystemManager - it's called separately during interpolation
         m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
+        
+        // Initialize RenderSystem separately - only called during OnInterpolateAndRender
+        m_RenderSystem = std::make_unique<ECS::RenderSystem>();
+        m_RenderSystem->Initialize(m_EntityManager, m_ComponentStore);
         
         m_ECSInitialized = true;
         
@@ -77,16 +81,12 @@ namespace Nyon
     
     void ECSApplication::OnInterpolateAndRender(float alpha)
     {
-        if (m_ECSInitialized)
+        if (m_ECSInitialized && m_RenderSystem)
         {
             // Pass interpolation alpha to RenderSystem for smooth rendering
-            ECS::RenderSystem* renderSystem = m_SystemManager.GetSystem<ECS::RenderSystem>();
-            if (renderSystem)
-            {
-                renderSystem->SetInterpolationAlpha(alpha);
-                // Update render system with interpolation
-                renderSystem->Update(0.0f); // Delta time not used in rendering
-            }
+            m_RenderSystem->SetInterpolationAlpha(alpha);
+            // Update render system with interpolation
+            m_RenderSystem->Update(0.0f); // Delta time not used in rendering
         }
         
         // Rendering is handled by the RenderSystem
@@ -97,6 +97,7 @@ namespace Nyon
         if (m_DebugRenderSystem)
         {
             m_DebugRenderSystem->RenderDebugInfo();
+            Graphics::Renderer2D::Flush();  // Flush debug shapes immediately
         }
     }
     

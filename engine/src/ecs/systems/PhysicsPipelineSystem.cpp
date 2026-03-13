@@ -133,7 +133,26 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         
         size_t solverIndex = 0;
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, PhysicsBodyComponent& body) {
-            if (!m_IslandManager->IsBodyAwake(entityId) && !body.isStatic)
+            // Determine if body should be included in solver
+            bool shouldInclude = false;
+            
+            if (body.isStatic)
+            {
+                // Static bodies are always included
+                shouldInclude = true;
+            }
+            else
+            {
+                // For dynamic bodies, check both island manager and component's own awake state
+                // This ensures newly created bodies (not yet in island manager) are still processed
+                bool islandAwake = m_IslandManager->IsBodyAwake(entityId);
+                bool componentAwake = body.isAwake;
+                
+                // Include if either says awake (treat unknown bodies as awake)
+                shouldInclude = islandAwake || componentAwake;
+            }
+            
+            if (!shouldInclude)
             {
                 return; // Skip sleeping bodies
             }
@@ -343,6 +362,55 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 vc.invIA = bodyA.invInertia;
                 vc.invIB = bodyB.invInertia;
                 
+                // Compute effective mass for each contact point
+                for (auto& point : vc.points)
+                {
+                    // Moment arms from body centers to contact point
+                    Math::Vector2 rA = point.position - bodyA.position;
+                    Math::Vector2 rB = point.position - bodyB.position;
+
+                    // Cross products with normal (scalar, since 2D)
+                    float rAcrossN = Math::Vector2::Cross(rA, vc.normal);
+                    float rBcrossN = Math::Vector2::Cross(rB, vc.normal);
+
+                    // Effective mass = sum of translational and rotational contributions
+                    float kNormal = vc.invMassA + vc.invMassB
+                                  + vc.invIA * rAcrossN * rAcrossN
+                                  + vc.invIB * rBcrossN * rBcrossN;
+
+                    point.normalMass = (kNormal > 1e-6f) ? (1.0f / kNormal) : 0.0f;
+
+                    // Tangent mass (for friction)
+                    float rAcrossT = Math::Vector2::Cross(rA, vc.tangent);
+                    float rBcrossT = Math::Vector2::Cross(rB, vc.tangent);
+                    float kTangent = vc.invMassA + vc.invMassB
+                                   + vc.invIA * rAcrossT * rAcrossT
+                                   + vc.invIB * rBcrossT * rBcrossT;
+                    point.tangentMass = (kTangent > 1e-6f) ? (1.0f / kTangent) : 0.0f;
+
+                    // Compute velocity bias for restitution (bounce)
+                    Math::Vector2 vA = bodyA.velocity;
+                    Math::Vector2 vB = bodyB.velocity;
+                    float wA = bodyA.angularVelocity;
+                    float wB = bodyB.angularVelocity;
+
+                    // Relative velocity at contact point
+                    Math::Vector2 relVel = vB + Math::Vector2::Cross(wB, rB)
+                                         - vA - Math::Vector2::Cross(wA, rA);
+                    float vRel = Math::Vector2::Dot(relVel, vc.normal);
+
+                    // Only apply restitution for separating contacts above threshold
+                    const float RESTITUTION_VELOCITY_THRESHOLD = 1.0f;
+                    if (vRel < -RESTITUTION_VELOCITY_THRESHOLD)
+                    {
+                        point.velocityBias = -vc.restitution * vRel;
+                    }
+                    else
+                    {
+                        point.velocityBias = 0.0f;
+                    }
+                }
+                
                 m_VelocityConstraints.push_back(vc);
             }
         }
@@ -458,6 +526,12 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             if (m_ComponentStore->HasComponent<TransformComponent>(solverBody.entityId))
             {
                 auto& transform = m_ComponentStore->GetComponent<TransformComponent>(solverBody.entityId);
+
+                // ✅ Write back the pre-integration position for interpolation
+                transform.previousPosition = solverBody.prevPosition;
+                transform.previousRotation = solverBody.prevAngle;
+
+                // Current (post-integration) state
                 transform.position = solverBody.position;
                 transform.rotation = solverBody.angle;
             }
