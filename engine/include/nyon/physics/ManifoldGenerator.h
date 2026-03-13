@@ -4,7 +4,6 @@
 #include "nyon/ecs/components/ColliderComponent.h"
 #include "nyon/ecs/components/PhysicsWorldComponent.h"
 #include "nyon/ecs/components/TransformComponent.h"
-#include "nyon/physics/SATCollisionDetector.h"
 
 namespace Nyon::Physics
 {
@@ -107,11 +106,6 @@ namespace Nyon::Physics
                                                      const Nyon::ECS::TransformComponent& transformA,
                                                      const Nyon::ECS::TransformComponent& transformB,
                                                      ECS::ContactManifold& manifold);
-        
-        /**
-         * @brief Convert Physics::ContactManifold to ECS::ContactManifold
-         */
-        static ECS::ContactManifold ConvertManifold(const Physics::ContactManifold& physicsManifold);
     };
 }
 

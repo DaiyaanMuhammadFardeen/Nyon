@@ -1,5 +1,4 @@
 #include "nyon/physics/ManifoldGenerator.h"
-#include "nyon/physics/SATCollisionDetector.h"
 
 #include <cmath>
 #include <limits>
@@ -82,6 +81,110 @@ namespace Nyon::Physics
         inline float ProjectPoint(const Math::Vector2& point, const Math::Vector2& axis)
         {
             return Dot(point, axis);
+        }
+        
+        // Find incident face on polygon that is most anti-parallel to reference normal
+        inline int FindIncidentFace(const std::vector<Math::Vector2>& vertices,
+                                   const std::vector<Math::Vector2>& normals,
+                                   const Math::Vector2& referenceNormal)
+        {
+            int incidentFace = 0;
+            float maxDot = -std::numeric_limits<float>::infinity();
+            
+            for (size_t i = 0; i < normals.size(); ++i)
+            {
+                float dot = Dot(normals[i], referenceNormal);
+                if (dot > maxDot)
+                {
+                    maxDot = dot;
+                    incidentFace = static_cast<int>(i);
+                }
+            }
+            
+            return incidentFace;
+        }
+        
+        // Clip segment to line using Sutherland-Hodgman algorithm
+        inline void ClipSegmentToLine(std::vector<ECS::ContactPoint>& vOut,
+                                     const std::vector<Math::Vector2>& refVerts,
+                                     const std::vector<Math::Vector2>& incVerts,
+                                     int refFaceIndex,
+                                     int incFaceIndex,
+                                     const Math::Vector2& normal,
+                                     float separation)
+        {
+            // Get reference face vertices
+            size_t n = refVerts.size();
+            Math::Vector2 v1 = refVerts[refFaceIndex];
+            Math::Vector2 v2 = refVerts[(refFaceIndex + 1) % n];
+            
+            // Get incident face vertices
+            n = incVerts.size();
+            Math::Vector2 iv1 = incVerts[incFaceIndex];
+            Math::Vector2 iv2 = incVerts[(incFaceIndex + 1) % n];
+            
+            // Clip incident edge against reference face side planes
+            std::vector<Math::Vector2> clipPoints;
+            
+            // Side 1
+            Math::Vector2 sideNormal = v2 - v1;
+            sideNormal = {-sideNormal.y, sideNormal.x}; // Perpendicular
+            float sideOffset = Dot(sideNormal, v1);
+            
+            float d1 = Dot(sideNormal, iv1) - sideOffset;
+            float d2 = Dot(sideNormal, iv2) - sideOffset;
+            
+            if (d1 <= 0.0f) clipPoints.push_back(iv1);
+            if (d1 * d2 < 0.0f && std::abs(d2 - d1) > 1e-6f)
+            {
+                float t = d1 / (d1 - d2);
+                clipPoints.push_back(iv1 + (iv2 - iv1) * t);
+            }
+            
+            // Side 2
+            if (!clipPoints.empty())
+            {
+                std::vector<Math::Vector2> clipPoints2;
+                Math::Vector2 sideNormal2 = v1 - v2;
+                sideNormal2 = {-sideNormal2.y, sideNormal2.x};
+                float sideOffset2 = Dot(sideNormal2, v2);
+                
+                for (size_t i = 0; i < clipPoints.size(); ++i)
+                {
+                    float d = Dot(sideNormal2, clipPoints[i]) - sideOffset2;
+                    if (d <= 0.0f)
+                    {
+                        clipPoints2.push_back(clipPoints[i]);
+                    }
+                    else if (i > 0)
+                    {
+                        float prevD = Dot(sideNormal2, clipPoints[i-1]) - sideOffset2;
+                        if (prevD * d < 0.0f && std::abs(d - prevD) > 1e-6f)
+                        {
+                            float t = prevD / (prevD - d);
+                            clipPoints2.push_back(clipPoints[i-1] + (clipPoints[i] - clipPoints[i-1]) * t);
+                        }
+                    }
+                }
+                clipPoints = clipPoints2;
+            }
+            
+            // Clip against reference face plane
+            float refOffset = Dot(normal, v1);
+            for (const auto& pt : clipPoints)
+            {
+                float sep = Dot(normal, pt) - refOffset;
+                if (sep <= separation)
+                {
+                    ECS::ContactPoint cp{};
+                    cp.position = pt;
+                    cp.normal = normal;
+                    cp.separation = sep;
+                    cp.normalImpulse = 0.0f;
+                    cp.tangentImpulse = 0.0f;
+                    vOut.push_back(cp);
+                }
+            }
         }
     } // namespace
 
@@ -314,13 +417,92 @@ namespace Nyon::Physics
                                                            const TransformComponent& transformB,
                                                            ECS::ContactManifold& manifold)
     {
-        // Delegate to SATCollisionDetector for proper Sutherland-Hodgman clipping
-        // This generates up to 2 contact points for stable stacking
-        SATCollisionDetector detector;
-        Physics::ContactManifold result = detector.DetectPolygonPolygon(
-            entityIdA, entityIdB, shapeIdA, shapeIdB,
-            polyA, polyB, transformA, transformB);
-        return ConvertManifold(result);
+        // Implement SAT-based polygon collision detection directly
+        manifold.touching = false;
+        manifold.entityIdA = entityIdA;
+        manifold.entityIdB = entityIdB;
+        manifold.shapeIdA = shapeIdA;
+        manifold.shapeIdB = shapeIdB;
+        
+        // Get world-space vertices and normals for both polygons
+        std::vector<Math::Vector2> vertsA, normalsA;
+        std::vector<Math::Vector2> vertsB, normalsB;
+        ComputePolygonWorld(polyA, transformA, vertsA, normalsA);
+        ComputePolygonWorld(polyB, transformB, vertsB, normalsB);
+        
+        float minOverlap = std::numeric_limits<float>::infinity();
+        Math::Vector2 separatingAxis;
+        int referenceFace = -1;
+        
+        // Test axes from polygon A
+        for (size_t i = 0; i < normalsA.size(); ++i)
+        {
+            Math::Vector2 axis = normalsA[i];
+            float minA, maxA, minB, maxB;
+            ProjectPolygon(vertsA, axis, minA, maxA);
+            ProjectPolygon(vertsB, axis, minB, maxB);
+            
+            float overlap = std::min(maxA, maxB) - std::max(minA, minB);
+            if (overlap < 0) return manifold; // Separating axis found
+            
+            if (overlap < minOverlap)
+            {
+                minOverlap = overlap;
+                separatingAxis = axis;
+                referenceFace = static_cast<int>(i);
+            }
+        }
+        
+        // Test axes from polygon B
+        for (size_t i = 0; i < normalsB.size(); ++i)
+        {
+            Math::Vector2 axis = normalsB[i];
+            float minA, maxA, minB, maxB;
+            ProjectPolygon(vertsA, axis, minA, maxA);
+            ProjectPolygon(vertsB, axis, minB, maxB);
+            
+            float overlap = std::min(maxA, maxB) - std::max(minA, minB);
+            if (overlap < 0) return manifold; // Separating axis found
+            
+            if (overlap < minOverlap)
+            {
+                minOverlap = overlap;
+                separatingAxis = axis;
+                referenceFace = static_cast<int>(i) + static_cast<int>(vertsA.size());
+            }
+        }
+        
+        // Collision detected - generate contact manifold
+        manifold.normal = separatingAxis;
+        manifold.points.clear();
+        
+        // Find incident face on polygon B relative to reference face on A
+        if (referenceFace < static_cast<int>(vertsA.size()))
+        {
+            // Reference face is on polygon A, find incident face on B
+            int incidentFace = FindIncidentFace(vertsB, normalsB, -separatingAxis);
+            ClipSegmentToLine(manifold.points, vertsA, vertsB, referenceFace, incidentFace, separatingAxis, minOverlap);
+        }
+        else
+        {
+            // Reference face is on polygon B, find incident face on A
+            int incidentFace = FindIncidentFace(vertsA, normalsA, separatingAxis);
+            int refFace = referenceFace - static_cast<int>(vertsA.size());
+            ClipSegmentToLine(manifold.points, vertsB, vertsA, refFace, incidentFace, -separatingAxis, minOverlap);
+            // Flip normal direction
+            manifold.normal = -separatingAxis;
+        }
+        
+        // Store local-space data
+        if (!manifold.points.empty())
+        {
+            Math::Vector2 invRotA = Rotate(manifold.normal, -transformA.rotation);
+            manifold.localNormal = invRotA;
+            manifold.localPoint = Rotate(manifold.points[0].position - transformA.position, -transformA.rotation);
+            manifold.touching = true;
+        }
+        
+        return manifold;
     }
     
     ECS::ContactManifold ManifoldGenerator::CircleCapsule(uint32_t entityIdA,
@@ -559,36 +741,52 @@ namespace Nyon::Physics
                                                              const TransformComponent& transformB,
                                                              ECS::ContactManifold& manifold)
     {
-        // Delegate to SATCollisionDetector for proper capsule collision detection
-        SATCollisionDetector detector;
-        
-        const auto& capsuleA = colliderA.GetCapsule();
-        
-        // Build variant for other shape - must match SATCollisionDetector signature
-        std::variant<ColliderComponent::PolygonShape,
-                     ColliderComponent::CircleShape,
-                     ColliderComponent::CapsuleShape> otherShape;
-        
+        // Dispatch capsule collision to appropriate handler based on other shape
         using ST = ColliderComponent::ShapeType;
+        ST tA = colliderA.GetType();
         ST tB = colliderB.GetType();
         
-        if (tB == ST::Polygon)
-            otherShape = colliderB.GetPolygon();
-        else if (tB == ST::Circle)
-            otherShape = colliderB.GetCircle();
-        else if (tB == ST::Capsule)
-            otherShape = colliderB.GetCapsule();
-        else
+        // Handle circle vs capsule
+        if ((tA == ST::Capsule && tB == ST::Circle) || (tA == ST::Circle && tB == ST::Capsule))
         {
-            // For Segment shapes, we'll handle them separately or skip
-            // For now, return empty manifold
-            return manifold;
+            const ColliderComponent* circleColl = (tA == ST::Circle) ? &colliderA : &colliderB;
+            const ColliderComponent* capColl = (tA == ST::Capsule) ? &colliderA : &colliderB;
+            const TransformComponent* circleTrans = (tA == ST::Circle) ? &transformA : &transformB;
+            const TransformComponent* capTrans = (tA == ST::Capsule) ? &transformA : &transformB;
+            uint32_t circleEnt = (tA == ST::Circle) ? entityIdA : entityIdB;
+            uint32_t capEnt = (tA == ST::Capsule) ? entityIdA : entityIdB;
+            uint32_t circleShape = (tA == ST::Circle) ? shapeIdA : shapeIdB;
+            uint32_t capShape = (tA == ST::Capsule) ? shapeIdA : shapeIdB;
+            
+            return CircleCapsule(circleEnt, capEnt, circleShape, capShape,
+                               *circleColl, *capColl, *circleTrans, *capTrans, manifold);
         }
         
-        Physics::ContactManifold result = detector.DetectCapsuleCollision(
-            entityIdA, entityIdB,
-            capsuleA, otherShape, transformA, transformB);
-        return ConvertManifold(result);
+        // Handle polygon vs capsule
+        if ((tA == ST::Capsule && tB == ST::Polygon) || (tA == ST::Polygon && tB == ST::Capsule))
+        {
+            const ColliderComponent* polyColl = (tA == ST::Polygon) ? &colliderA : &colliderB;
+            const ColliderComponent* capColl = (tA == ST::Capsule) ? &colliderA : &colliderB;
+            const TransformComponent* polyTrans = (tA == ST::Polygon) ? &transformA : &transformB;
+            const TransformComponent* capTrans = (tA == ST::Capsule) ? &transformA : &transformB;
+            uint32_t polyEnt = (tA == ST::Polygon) ? entityIdA : entityIdB;
+            uint32_t capEnt = (tA == ST::Capsule) ? entityIdA : entityIdB;
+            uint32_t polyShape = (tA == ST::Polygon) ? shapeIdA : shapeIdB;
+            uint32_t capShape = (tA == ST::Capsule) ? shapeIdA : shapeIdB;
+            
+            return PolygonCapsule(polyEnt, capEnt, polyShape, capShape,
+                                *polyColl, *capColl, *polyTrans, *capTrans, manifold);
+        }
+        
+        // Handle capsule vs capsule
+        if (tA == ST::Capsule && tB == ST::Capsule)
+        {
+            return CapsuleCapsule(entityIdA, entityIdB, shapeIdA, shapeIdB,
+                                 colliderA, colliderB, transformA, transformB, manifold);
+        }
+        
+        // Unsupported shape combination
+        return manifold;
     }
     
     ECS::ContactManifold ManifoldGenerator::SegmentCollision(uint32_t entityIdA,
@@ -618,38 +816,6 @@ namespace Nyon::Physics
         // Segment-segment collision is rare and can be handled as degenerate polygon
         
         return manifold;
-    }
-    
-    ECS::ContactManifold ManifoldGenerator::ConvertManifold(const Physics::ContactManifold& physicsManifold)
-    {
-        ECS::ContactManifold ecsManifold;
-        ecsManifold.entityIdA = physicsManifold.entityIdA;
-        ecsManifold.entityIdB = physicsManifold.entityIdB;
-        ecsManifold.shapeIdA = physicsManifold.shapeIdA;
-        ecsManifold.shapeIdB = physicsManifold.shapeIdB;
-        ecsManifold.normal = physicsManifold.normal;
-        ecsManifold.localNormal = physicsManifold.localNormal;
-        ecsManifold.localPoint = physicsManifold.localPoint;
-        ecsManifold.touching = physicsManifold.touching;
-        
-        // Convert contact points
-        for (const auto& physicsPoint : physicsManifold.points)
-        {
-            ECS::ContactPoint ecsPoint;
-            ecsPoint.position = physicsPoint.position;
-            ecsPoint.normal = physicsPoint.normal;
-            ecsPoint.separation = physicsPoint.separation;
-            ecsPoint.normalImpulse = physicsPoint.normalImpulse;
-            ecsPoint.tangentImpulse = physicsPoint.tangentImpulse;
-            ecsPoint.normalMass = physicsPoint.normalMass;
-            ecsPoint.tangentMass = physicsPoint.tangentMass;
-            ecsPoint.featureId = physicsPoint.featureId;
-            ecsPoint.persisted = physicsPoint.persisted;
-            
-            ecsManifold.points.push_back(ecsPoint);
-        }
-        
-        return ecsManifold;
     }
 }
 
