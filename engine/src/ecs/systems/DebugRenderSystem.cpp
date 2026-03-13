@@ -99,10 +99,8 @@ namespace Nyon::ECS
         if (!m_ShouldRender || m_DebugCommands.empty())
             return;
             
-        // Begin rendering debug information
-        Graphics::Renderer2D::BeginScene();
-            
-        // Execute all queued debug draw commands
+        // DON'T call BeginScene() - it would clear the buffers that RenderSystem already drew!
+        // Just execute the debug draw commands directly
         for (const auto& cmd : m_DebugCommands)
         {
             switch (cmd.type)
@@ -128,8 +126,9 @@ namespace Nyon::ECS
             }
         }
         
-        // End rendering debug information
-        Graphics::Renderer2D::EndScene();
+        // DON'T Flush here - let EndScene from RenderSystem flush everything together!
+        // Flushing separately causes flickering and double-buffering issues
+        // Graphics::Renderer2D::Flush();  // REMOVED - causes flickering!
         
         // Reset for next frame
         m_ShouldRender = false;

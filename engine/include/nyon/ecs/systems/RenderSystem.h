@@ -37,6 +37,14 @@ namespace Nyon::ECS
             // Render all entities with render components
             const auto& renderEntities = m_ComponentStore->GetEntitiesWithComponent<RenderComponent>();
             
+#ifdef _DEBUG
+            static int s_RenderDebugCounter = 0;
+            if (++s_RenderDebugCounter >= 10) {
+                s_RenderDebugCounter = 0;
+                std::cerr << "[RENDER@" << s_RenderDebugCounter << "] Drawing " << renderEntities.size() << " entities:" << std::endl;
+            }
+#endif
+            
             for (EntityID entity : renderEntities)
             {
                 if (!m_ComponentStore->HasComponent<TransformComponent>(entity)) continue;
@@ -44,18 +52,50 @@ namespace Nyon::ECS
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entity);
                 const auto& render = m_ComponentStore->GetComponent<RenderComponent>(entity);
                 
+#ifdef _DEBUG
+                static int s_RenderEntityCounter = 0;
+                if (++s_RenderEntityCounter >= 10) {
+                    s_RenderEntityCounter = 0;
+                    std::cerr << "  Entity[" << entity << "] pos=(" << transform.position.x << "," << transform.position.y 
+                              << ") size=(" << render.size.x << "," << render.size.y 
+                              << ") color=(" << render.color.x << "," << render.color.y << "," << render.color.z 
+                              << ") shape=" << (int)render.shapeType 
+                              << ") visible=" << render.visible << std::endl;
+                }
+#endif
+                
                 if (render.visible)
                 {
                     // Use interpolated position for smooth rendering
                     Math::Vector2 interpPosition = transform.GetInterpolatedPosition(m_Alpha);
                     float interpRotation = transform.GetInterpolatedRotation(m_Alpha);
                     
-                    Graphics::Renderer2D::DrawQuad(
-                        interpPosition,
-                        render.size,
-                        render.origin,
-                        render.color
-                    );
+                    // Draw based on shape type
+                    switch (render.shapeType)
+                    {
+                        case RenderComponent::ShapeType::Circle:
+                        {
+                            // For circles, use the smaller dimension as diameter
+                            float radius = std::min(render.size.x, render.size.y) * 0.5f;
+                            Graphics::Renderer2D::DrawSolidCircle(
+                                interpPosition,
+                                radius,
+                                render.color
+                            );
+                            break;
+                        }
+                        
+                        case RenderComponent::ShapeType::Rectangle:
+                        default:
+                            Graphics::Renderer2D::DrawQuad(
+                                interpPosition,
+                                render.size,
+                                render.origin,
+                                render.color,
+                                interpRotation
+                            );
+                            break;
+                    }
                 }
             }
             

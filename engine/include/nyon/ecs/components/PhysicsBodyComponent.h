@@ -26,8 +26,8 @@ namespace Nyon::ECS
         // === MASS PROPERTIES ===
         float mass = 1.0f;                          // Mass of the body (0 = infinite mass/static)
         float inverseMass = 1.0f;                   // 1/mass (cached for performance)
-        float inertia = 0.0f;                       // Moment of inertia (default to 0, set from shape)
-        float inverseInertia = 0.0f;                // 1/inertia (cached for performance)
+        float inertia = 1.0f;                       // Moment of inertia (default to 1 for stability)
+        float inverseInertia = 1.0f;                // 1/inertia (cached for performance)
         Math::Vector2 centerOfMass = {0.0f, 0.0f};  // Local center of mass
         
         // === MATERIAL PROPERTIES ===
@@ -88,8 +88,11 @@ namespace Nyon::ECS
             {
                 // Preserve mass value for when body becomes dynamic again
                 inverseMass = 0.0f;
-                inertia = 0.0f;
-                inverseInertia = 0.0f;
+                // Preserve inertia value for when body becomes dynamic again
+                if (inertia > 0.0f)
+                {
+                    inverseInertia = 0.0f;
+                }
             }
             else
             {
@@ -101,7 +104,8 @@ namespace Nyon::ECS
                 }
                 else
                 {
-                    // Fallback: treat as point mass (no rotation)
+                    // Fallback: treat as point mass (no rotation resistance)
+                    // This is physically valid but unusual - user should set proper inertia
                     inertia = 0.0f;
                     inverseInertia = 0.0f;
                 }
@@ -195,7 +199,7 @@ namespace Nyon::ECS
         bool IsStatic() const { return isStatic; }
         bool IsKinematic() const { return isKinematic; }
         bool IsDynamic() const { return !isStatic && !isKinematic; }
-        bool ShouldCollide() const { return isAwake || isKinematic; }
+        bool ShouldCollide() const { return true; }  // All bodies participate in collision detection
         float GetMass() const { return mass; }
         float GetInertia() const { return inertia; }
     };

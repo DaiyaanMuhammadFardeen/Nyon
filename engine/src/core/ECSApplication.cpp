@@ -36,19 +36,21 @@ namespace Nyon
         // Initialize input manager with the window
         Utils::InputManager::Init(GetWindow());
         
-        // Initialize ECS systems in proper order
-m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
-m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
-m_SystemManager.AddSystem(std::make_unique<ECS::RenderSystem>());
-m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
+        // Call game-specific ECS initialization FIRST
+        // This allows games to create PhysicsWorldComponent and other required components
+        // before ECS systems are initialized
+        OnECSStart();
+        
+        // NOW initialize ECS systems in proper order (after game has created required components)
+        m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
+        m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
+        m_SystemManager.AddSystem(std::make_unique<ECS::RenderSystem>());
+        m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
         
         m_ECSInitialized = true;
         
         // Cache DebugRenderSystem pointer to avoid dynamic_cast every frame
         m_DebugRenderSystem = m_SystemManager.GetSystem<ECS::DebugRenderSystem>();
-        
-        // Call game-specific ECS initialization
-        OnECSStart();
         
         NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnStart() completed");
     }
@@ -60,6 +62,7 @@ m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
         if (m_ECSInitialized)
         {
             // Update only non-render ECS systems (physics, input, etc.)
+            NYON_DEBUG_LOG("[DEBUG] Calling SystemManager.Update() - should update PhysicsPipelineSystem");
             m_SystemManager.Update(deltaTime);
             
             // Call game-specific fixed-step physics logic

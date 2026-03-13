@@ -8,9 +8,7 @@
 #include "nyon/ecs/components/PhysicsWorldComponent.h"
 #include "nyon/ecs/components/PhysicsBodyComponent.h"
 #include "nyon/ecs/components/ColliderComponent.h"
-
-#include "nyon/ecs/systems/PhysicsIntegrationSystem.h"
-#include "nyon/ecs/systems/DebugRenderSystem.h"
+#include "nyon/ecs/components/RenderComponent.h"
 
 #include "nyon/utils/InputManager.h"
 
@@ -19,7 +17,7 @@
 using namespace Nyon;
 
 PhysicsDemoGame::PhysicsDemoGame()
-    : ECSApplication("Nyon Physics Demo – Full Showcase", 1280, 720)
+    : ECSApplication("Nyon Physics Demo – Full Showcase", 1600, 900)
 {
 }
 
@@ -81,19 +79,23 @@ void PhysicsDemoGame::CreatePhysicsWorld()
 
     components.AddComponent(worldEntity, std::move(world));
 
-    // Register physics integration system (simplified physics pipeline)
-    systems.AddSystem(std::make_unique<ECS::PhysicsIntegrationSystem>());
+    // NOTE: PhysicsPipelineSystem is already registered globally in ECSApplication
+    // No need to add PhysicsIntegrationSystem - that's a legacy system
 }
 
 void PhysicsDemoGame::CreateBounds()
 {
+    // TEMPORARILY DISABLED - Testing collision system without boundaries
+    // Uncomment to enable boundary walls
+    
+    /*
     auto& entities   = GetEntityManager();
     auto& components = GetComponentStore();
 
     // Static border walls around the play area to keep bodies on screen.
-    const float width  = 1280.0f;
-    const float height = 720.0f;
-    const float thickness = 40.0f;
+    const float width  = 1600.0f;
+    const float height = 900.0f;
+    const float thickness = 50.0f;  // Slightly thicker for better collision margin
 
     using Nyon::Math::Vector2;
 
@@ -117,21 +119,33 @@ void PhysicsDemoGame::CreateBounds()
 
         ECS::ColliderComponent collider(shape);
         collider.material.friction    = 0.8f;
-        collider.material.restitution = 0.1f;
+        collider.material.restitution = 0.0f;  // No bounce for walls
+
+        // Add render component for visual representation (dark gray walls)
+        ECS::RenderComponent render(
+            {halfExtents.x * 2.0f, halfExtents.y * 2.0f},  // size
+            {0.2f, 0.2f, 0.2f}  // dark gray color
+        );
 
         components.AddComponent(wall, std::move(t));
         components.AddComponent(wall, std::move(body));
         components.AddComponent(wall, std::move(collider));
+        components.AddComponent(wall, std::move(render));
     };
 
-    // Floor
-    createWall({width * 0.5f, height + thickness * 0.5f}, {width * 0.5f, thickness * 0.5f});
-    // Ceiling
-    createWall({width * 0.5f, -thickness * 0.5f},        {width * 0.5f, thickness * 0.5f});
-    // Left wall
-    createWall({-thickness * 0.5f, height * 0.5f},       {thickness * 0.5f, height * 0.5f});
-    // Right wall
-    createWall({width + thickness * 0.5f, height * 0.5f},{thickness * 0.5f, height * 0.5f});
+    // Position walls to form a room WITH MARGINS to prevent penetration flickering
+    // Floor - positioned so top edge is at y=height-1 (objects collide before going off-screen)
+    createWall({width * 0.5f, height + thickness * 0.5f - 1.0f}, {width * 0.5f, thickness * 0.5f});
+    
+    // Ceiling - positioned so bottom edge is at y=1
+    createWall({width * 0.5f, -thickness * 0.5f + 1.0f}, {width * 0.5f, thickness * 0.5f});
+    
+    // Left wall - positioned so right edge is at x=1
+    createWall({-thickness * 0.5f + 1.0f, height * 0.5f}, {thickness * 0.5f, height * 0.5f});
+    
+    // Right wall - positioned so left edge is at x=width-1
+    createWall({width + thickness * 0.5f - 1.0f, height * 0.5f}, {thickness * 0.5f, height * 0.5f});
+    */
 }
 
 void PhysicsDemoGame::CreateStackTest()
@@ -144,8 +158,9 @@ void PhysicsDemoGame::CreateStackTest()
     const int columns = 6;
     const int rows    = 8;
     const float boxSize = 35.0f;
-    const float startX  = 350.0f;
-    const float startY  = 650.0f;
+    const float startX  = 500.0f;
+    const float startY  = 800.0f;  // Start higher up with more clearance from ceiling
+    const float spacing = boxSize * 2.5f;  // Better spacing to prevent initial overlap
 
     for (int x = 0; x < columns; ++x)
     {
@@ -155,8 +170,8 @@ void PhysicsDemoGame::CreateStackTest()
 
             ECS::TransformComponent t;
             t.position = {
-                startX + x * (boxSize * 2.2f),
-                startY - y * (boxSize * 2.2f)
+                startX + x * spacing,
+                startY - y * spacing
             };
 
             ECS::PhysicsBodyComponent body;
@@ -174,9 +189,16 @@ void PhysicsDemoGame::CreateStackTest()
             collider.material.friction    = 0.4f;
             collider.material.restitution = 0.0f;
 
+            // Add render component for visual representation (blue boxes)
+            ECS::RenderComponent render(
+                {boxSize * 2.0f, boxSize * 2.0f},  // size
+                {0.2f, 0.4f, 1.0f}  // blue color
+            );
+
             components.AddComponent(box, std::move(t));
             components.AddComponent(box, std::move(body));
             components.AddComponent(box, std::move(collider));
+            components.AddComponent(box, std::move(render));
         }
     }
 }
@@ -193,7 +215,7 @@ void PhysicsDemoGame::CreateRampFrictionTest()
         ECS::EntityID ramp = entities.CreateEntity();
 
         ECS::TransformComponent t;
-        t.position = {950.0f, 550.0f};
+        t.position = {1100.0f, 650.0f};  // Repositioned for larger screen
         t.rotation = -0.35f; // Slight incline
 
         ECS::PhysicsBodyComponent body;
@@ -214,15 +236,22 @@ void PhysicsDemoGame::CreateRampFrictionTest()
         collider.material.friction    = 0.8f; // High friction ramp surface
         collider.material.restitution = 0.0f;
 
+        // Add render component for visual representation (brown ramp)
+        ECS::RenderComponent render(
+            {halfWidth * 2.0f, halfHeight * 2.0f},  // size
+            {0.6f, 0.3f, 0.0f}  // brown color
+        );
+
         components.AddComponent(ramp, std::move(t));
         components.AddComponent(ramp, std::move(body));
         components.AddComponent(ramp, std::move(collider));
+        components.AddComponent(ramp, std::move(render));
     }
 
     // Drop boxes with varying friction on the ramp
     const int boxCount = 5;
-    const float baseX  = 850.0f;
-    const float baseY  = 350.0f;
+    const float baseX  = 1000.0f;
+    const float baseY  = 450.0f;
     const float spacing = 60.0f;
 
     for (int i = 0; i < boxCount; ++i)
@@ -251,9 +280,16 @@ void PhysicsDemoGame::CreateRampFrictionTest()
         collider.material.friction    = friction;
         collider.material.restitution = restitution;
 
+        // Add render component for visual representation (orange boxes)
+        ECS::RenderComponent render(
+            {40.0f, 40.0f},  // size
+            {1.0f, 0.5f, 0.0f}  // orange color
+        );
+
         components.AddComponent(box, std::move(t));
         components.AddComponent(box, std::move(body));
         components.AddComponent(box, std::move(collider));
+        components.AddComponent(box, std::move(render));
     }
 }
 
@@ -265,8 +301,8 @@ void PhysicsDemoGame::CreateBounceTest()
     using Nyon::Math::Vector2;
 
     const int ballCount = 6;
-    const float baseX   = 200.0f;
-    const float baseY   = 100.0f;
+    const float baseX   = 300.0f;
+    const float baseY   = 200.0f;
     const float spacing = 80.0f;
     const float radius  = 20.0f;
 
@@ -289,9 +325,17 @@ void PhysicsDemoGame::CreateBounceTest()
         collider.material.friction    = friction;
         collider.material.restitution = restitution;
 
+        // Add render component for visual representation (red circles)
+        ECS::RenderComponent render(
+            {radius * 2.0f, radius * 2.0f},  // size
+            {1.0f, 0.0f, 0.0f},  // red color
+            ECS::RenderComponent::ShapeType::Circle  // render as circle
+        );
+
         components.AddComponent(ball, std::move(t));
         components.AddComponent(ball, std::move(body));
         components.AddComponent(ball, std::move(collider));
+        components.AddComponent(ball, std::move(render));
     }
 }
 
@@ -360,9 +404,16 @@ void PhysicsDemoGame::SpawnBoxAt(float x, float y, float size, float restitution
     collider.material.friction    = friction;
     collider.material.restitution = restitution;
 
+    // Add render component for visual representation (cyan boxes)
+    ECS::RenderComponent render(
+        {size * 2.0f, size * 2.0f},  // size
+        {0.0f, 1.0f, 1.0f}  // cyan color
+    );
+
     components.AddComponent(box, std::move(t));
     components.AddComponent(box, std::move(body));
     components.AddComponent(box, std::move(collider));
+    components.AddComponent(box, std::move(render));
 }
 
 void PhysicsDemoGame::SpawnBallAt(float x, float y, float radius, float restitution, float friction)
@@ -383,8 +434,16 @@ void PhysicsDemoGame::SpawnBallAt(float x, float y, float radius, float restitut
     collider.material.friction    = friction;
     collider.material.restitution = restitution;
 
+    // Add render component for visual representation (green circles)
+    ECS::RenderComponent render(
+        {radius * 2.0f, radius * 2.0f},  // size
+        {0.0f, 1.0f, 0.0f},  // green color
+        ECS::RenderComponent::ShapeType::Circle  // render as circle
+    );
+
     components.AddComponent(ball, std::move(t));
     components.AddComponent(ball, std::move(body));
     components.AddComponent(ball, std::move(collider));
+    components.AddComponent(ball, std::move(render));
 }
 

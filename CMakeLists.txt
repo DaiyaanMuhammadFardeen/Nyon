@@ -4,7 +4,7 @@ project(Nyon)
 # Add subdirectories
 add_subdirectory(engine)
 # add_subdirectory(test)  # Temporarily disabled due to CMake conflicts
-add_subdirectory(game/physics-demo)  # Add our new physics demo game
+add_subdirectory(game/simple-test)  # Simple physics test
 
 # Main project executable (optional - can be removed if not needed)
 # add_executable(nyon_main src/main.cpp)

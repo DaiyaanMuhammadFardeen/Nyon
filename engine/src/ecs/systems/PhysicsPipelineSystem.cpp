@@ -3,13 +3,21 @@
 #include "nyon/physics/ManifoldGenerator.h"
 #include <chrono>
 #include <algorithm>
+#include <iostream>
 
-// Debug logging macro - only output in debug builds
-#ifdef _DEBUG
-#define NYON_DEBUG_LOG(x) std::cerr << "[PhysicsPipeline] " << x << std::endl
-#else
-#define NYON_DEBUG_LOG(x)
-#endif
+// ALWAYS enabled debug logging (not dependent on _DEBUG)
+#define NYON_DEBUG_LOG(x) std::cerr << "[PHYSICS] " << x << std::endl
+
+// Rate-limited debug logging (outputs every N frames to avoid flooding)
+static int s_DebugFrameCounter = 0;
+static constexpr int DEBUG_OUTPUT_INTERVAL = 25; // Output every 25 frames (~417ms at 60fps)
+#define NYON_DEBUG_LOG_EVERY(x) \
+    do { \
+        if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) { \
+            s_DebugFrameCounter = 0; \
+            std::cerr << "[PHYSICS@" << s_DebugFrameCounter << "] " << x << std::endl; \
+        } \
+    } while(0)
 
 namespace Nyon::ECS
 {
@@ -37,8 +45,37 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
 
     void PhysicsPipelineSystem::Update(float deltaTime)
     {
+        // Lazy initialization - find PhysicsWorldComponent if not already found
+        if (!m_PhysicsWorld && m_ComponentStore)
+        {
+            m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
+                m_PhysicsWorld = &world;
+                NYON_DEBUG_LOG("Found PhysicsWorldComponent at entity ID: " << entityId);
+                
+                // Initialize island manager now that we have a physics world
+                if (!m_IslandManager)
+                {
+                    m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
+                    NYON_DEBUG_LOG("IslandManager initialized via lazy init");
+                }
+            });
+        }
+        
+        NYON_DEBUG_LOG("[PHYSICS] Update() called with deltaTime=" << deltaTime);
+        
         if (!m_PhysicsWorld || !m_ComponentStore)
+        {
+            NYON_DEBUG_LOG_EVERY("[PHYSICS] Early exit - m_PhysicsWorld=" << (m_PhysicsWorld ? "valid" : "null") 
+                          << ", m_ComponentStore=" << (m_ComponentStore ? "valid" : "null"));
             return;
+        }
+        
+        // Safety check: ensure IslandManager is initialized
+        if (!m_IslandManager)
+        {
+            NYON_DEBUG_LOG("Initializing IslandManager...");
+            m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
+        }
             
         auto startTime = std::chrono::high_resolution_clock::now();
         
@@ -46,9 +83,15 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         m_Accumulator += deltaTime;
         m_Accumulator = std::min(m_Accumulator, MAX_TIMESTEP);
         
+        NYON_DEBUG_LOG("[PHYSICS] Accumulator=" << m_Accumulator << ", FIXED_TIMESTEP=" << FIXED_TIMESTEP);
+        
         // Process fixed timesteps
+        int stepCount = 0;
         while (m_Accumulator >= FIXED_TIMESTEP)
         {
+            stepCount++;
+            NYON_DEBUG_LOG("[PHYSICS] Processing physics step #" << stepCount);
+            
             // Collect active entities
             m_ActiveEntities.clear();
             m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
@@ -58,7 +101,7 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 }
             });
             
-            NYON_DEBUG_LOG("Processing " << m_ActiveEntities.size() << " active entities");
+            NYON_DEBUG_LOG("[PHYSICS] Found " << m_ActiveEntities.size() << " active entities");
             
             // Execute pipeline phases
             PrepareBodiesForUpdate();
@@ -80,7 +123,7 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         auto duration = std::chrono::duration<float, std::milli>(endTime - startTime);
         m_Stats.updateTime = duration.count();
         
-        NYON_DEBUG_LOG("Physics update completed in " << m_Stats.updateTime << " ms");
+        NYON_DEBUG_LOG("[PHYSICS] Physics update completed in " << m_Stats.updateTime << " ms, processed " << stepCount << " steps");
     }
 
     void PhysicsPipelineSystem::PrepareBodiesForUpdate()
@@ -125,13 +168,43 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             m_EntityToSolverIndex[entityId] = solverIndex++;
         });
         
-        NYON_DEBUG_LOG("Prepared " << m_SolverBodies.size() << " solver bodies");
+        NYON_DEBUG_LOG_EVERY("Prepared " << m_SolverBodies.size() << " solver bodies:");
+        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)5); ++i)
+        {
+            const auto& body = m_SolverBodies[i];
+            NYON_DEBUG_LOG_EVERY("  Body[" << i << "] entity=" << body.entityId 
+                              << " pos=(" << body.position.x << "," << body.position.y 
+                              << ") vel=(" << body.velocity.x << "," << body.velocity.y 
+                              << ") invMass=" << body.invMass 
+                              << " static=" << body.isStatic 
+                              << " awake=" << body.isAwake);
+        }
     }
 
     void PhysicsPipelineSystem::BroadPhaseDetection()
     {
         m_BroadPhasePairs.clear();
-        m_ShapeProxyMap.clear();
+        
+        // DON'T clear m_ShapeProxyMap - we need to preserve proxy IDs across frames
+        // Only remove proxies for entities that no longer have colliders
+        std::vector<uint32_t> entitiesToRemove;
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
+        {
+            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId))
+            {
+                entitiesToRemove.push_back(entityId);
+            }
+        }
+        
+        for (uint32_t entityId : entitiesToRemove)
+        {
+            uint32_t proxyId = m_ShapeProxyMap[entityId];
+            m_BroadPhaseTree.DestroyProxy(proxyId);
+            m_ShapeProxyMap.erase(entityId);
+        }
+        
+        NYON_DEBUG_LOG_EVERY("BroadPhaseDetection: " << m_ShapeProxyMap.size() << " proxies in map, " 
+                          << m_ActiveEntities.size() << " active entities");
         
         // Update broad phase tree and collect potential pairs
         m_ComponentStore->ForEachComponent<ColliderComponent>([&](EntityID entityId, ColliderComponent& collider) {
@@ -139,6 +212,11 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 return;
                 
             const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+            
+            // Debug: Log entity position
+            NYON_DEBUG_LOG_EVERY("  Entity " << entityId 
+                              << " pos=(" << transform.position.x << "," << transform.position.y << ")"
+                              << " colliderType=" << (int)collider.type);
             
             // Update shape AABB in broad phase tree
             UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation);
@@ -148,15 +226,43 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         BroadPhaseCallback callback;
         callback.system = this;
         
-        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
+        // Collect all proxy-entity pairs first to avoid iterator invalidation
+        std::vector<std::pair<uint32_t, uint32_t>> proxyPairs(m_ShapeProxyMap.begin(), m_ShapeProxyMap.end());
+        
+        // MANUAL OVERLAP TEST - brute force check all pairs
+        for (size_t i = 0; i < proxyPairs.size(); ++i)
         {
-            callback.entityId = entityId;
-            const auto& aabb = m_BroadPhaseTree.GetFatAABB(proxyId);
-            m_BroadPhaseTree.Query(aabb, &callback);
+            for (size_t j = i + 1; j < proxyPairs.size(); ++j)
+            {
+                const auto& [entityA, proxyA] = proxyPairs[i];
+                const auto& [entityB, proxyB] = proxyPairs[j];
+                    
+                const auto& aabbA = m_BroadPhaseTree.GetFatAABB(proxyA);
+                const auto& aabbB = m_BroadPhaseTree.GetFatAABB(proxyB);
+                    
+                bool overlaps = !(aabbA.upperBound.x <= aabbB.lowerBound.x || 
+                                aabbA.lowerBound.x >= aabbB.upperBound.x ||
+                                aabbA.upperBound.y <= aabbB.lowerBound.y || 
+                                aabbA.lowerBound.y >= aabbB.upperBound.y);
+                    
+                if (overlaps)
+                {
+                    m_BroadPhasePairs.emplace_back(entityA, entityB);
+                    std::cerr << "[PHYSICS] COLLISION DETECTED: entities " << entityA << " and " << entityB << std::endl;
+                }
+            }
         }
         
         m_Stats.broadPhasePairs = m_BroadPhasePairs.size();
-        NYON_DEBUG_LOG("Broad phase found " << m_BroadPhasePairs.size() << " potential pairs");
+        NYON_DEBUG_LOG_EVERY("Broad phase found " << m_BroadPhasePairs.size() << " potential pairs");
+        if (!m_BroadPhasePairs.empty())
+        {
+            for (size_t i = 0; i < std::min(m_BroadPhasePairs.size(), (size_t)5); ++i)
+            {
+                const auto& [entityA, entityB] = m_BroadPhasePairs[i];
+                NYON_DEBUG_LOG_EVERY("  Pair[" << i << "] entityA=" << entityA << " entityB=" << entityB);
+            }
+        }
     }
 
     void PhysicsPipelineSystem::NarrowPhaseDetection()
@@ -182,7 +288,18 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         }
         
         m_Stats.narrowPhaseContacts = m_ContactManifolds.size();
-        NYON_DEBUG_LOG("Narrow phase generated " << m_ContactManifolds.size() << " contact manifolds");
+        NYON_DEBUG_LOG_EVERY("Narrow phase generated " << m_ContactManifolds.size() << " contact manifolds");
+        if (!m_ContactManifolds.empty())
+        {
+            for (size_t i = 0; i < std::min(m_ContactManifolds.size(), (size_t)5); ++i)
+            {
+                const auto& manifold = m_ContactManifolds[i];
+                NYON_DEBUG_LOG_EVERY("  Contact[" << i << "] entityA=" << manifold.entityIdA 
+                                  << " entityB=" << manifold.entityIdB 
+                                  << " points=" << manifold.points.size()
+                                  << " normal=(" << manifold.normal.x << "," << manifold.normal.y << ")");
+            }
+        }
     }
 
     void PhysicsPipelineSystem::IslandDetection()
@@ -263,12 +380,24 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
 
     void PhysicsPipelineSystem::PositionSolving()
     {
+        NYON_DEBUG_LOG_EVERY("Position solving: starting with " << m_VelocityConstraints.size() << " constraints");
+        
         IntegratePositions(FIXED_TIMESTEP);
         
         // Solve position constraints for stabilization
         for (int i = 0; i < m_Config.positionIterations; ++i)
         {
+            NYON_DEBUG_LOG_EVERY("  Position iteration " << i);
             SolvePositionConstraints();
+        }
+        
+        // Debug: Log corrected positions
+        NYON_DEBUG_LOG_EVERY("Position solving completed. Sample body positions:");
+        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)3); ++i)
+        {
+            const auto& body = m_SolverBodies[i];
+            NYON_DEBUG_LOG_EVERY("  Body[" << i << "] pos=(" << body.position.x << "," << body.position.y 
+                              << ") angle=" << body.angle);
         }
     }
 
@@ -320,14 +449,29 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
     void PhysicsPipelineSystem::UpdateTransformsFromSolver()
     {
         // Update transform components from solver results
+        // ONLY update dynamic bodies - static bodies should NOT be overwritten!
         for (const auto& solverBody : m_SolverBodies)
         {
+            if (solverBody.isStatic)
+                continue;  // Skip static bodies - their transforms are set at creation time
+                
             if (m_ComponentStore->HasComponent<TransformComponent>(solverBody.entityId))
             {
                 auto& transform = m_ComponentStore->GetComponent<TransformComponent>(solverBody.entityId);
                 transform.position = solverBody.position;
                 transform.rotation = solverBody.angle;
             }
+        }
+        
+        // Debug: Log positions every N frames
+        NYON_DEBUG_LOG_EVERY("Updated " << m_SolverBodies.size() << " bodies:");
+        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)3); ++i)
+        {
+            const auto& body = m_SolverBodies[i];
+            NYON_DEBUG_LOG_EVERY("  Body[" << i << "] entity=" << body.entityId 
+                              << " pos=(" << body.position.x << "," << body.position.y 
+                              << ") vel=(" << body.velocity.x << "," << body.velocity.y 
+                              << ") static=" << body.isStatic);
         }
     }
 
@@ -336,9 +480,22 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
     {
         uint32_t otherEntityId = userData;
         
+        // Debug logging using system pointer
+        if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
+            s_DebugFrameCounter = 0;
+            std::cerr << "[PHYSICS@0]   QueryCallback: querying entity=" << entityId 
+                      << " found node=" << nodeId << " otherEntity=" << otherEntityId << std::endl;
+        }
+        
         // Avoid self-collision and ensure canonical pair ordering
         if (otherEntityId <= entityId)
+        {
+            if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
+                s_DebugFrameCounter = 0;
+                std::cerr << "[PHYSICS@0]     Skipping: otherEntityId <= entityId" << std::endl;
+            }
             return true;
+        }
             
         // Check if both entities have colliders and are not filtered
         if (system->m_ComponentStore->HasComponent<ColliderComponent>(entityId) &&
@@ -351,6 +508,24 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             if (colliderA.filter.ShouldCollide(colliderB.filter))
             {
                 system->m_BroadPhasePairs.emplace_back(entityId, otherEntityId);
+                if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
+                    s_DebugFrameCounter = 0;
+                    std::cerr << "[PHYSICS@0]     Added pair: (" << entityId << "," << otherEntityId << ")" << std::endl;
+                }
+            }
+            else
+            {
+                if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
+                    s_DebugFrameCounter = 0;
+                    std::cerr << "[PHYSICS@0]     Filtered out by collision filter" << std::endl;
+                }
+            }
+        }
+        else
+        {
+            if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
+                s_DebugFrameCounter = 0;
+                std::cerr << "[PHYSICS@0]     One or both entities missing ColliderComponent" << std::endl;
             }
         }
         
@@ -373,6 +548,11 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         fatAABB.lowerBound.y -= 0.1f;
         fatAABB.upperBound.x += 0.1f;
         fatAABB.upperBound.y += 0.1f;
+        
+        NYON_DEBUG_LOG_EVERY("  AABB entity=" << entityId 
+                          << " center=(" << position.x << "," << position.y << ")"
+                          << " bounds=[(" << fatAABB.lowerBound.x << "," << fatAABB.lowerBound.y << ")-"
+                          << "(" << fatAABB.upperBound.x << "," << fatAABB.upperBound.y << ")]");
         
         auto it = m_ShapeProxyMap.find(entityId);
         if (it != m_ShapeProxyMap.end())
@@ -545,6 +725,7 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
 
     void PhysicsPipelineSystem::SolvePositionConstraints()
     {
+        int correctionsApplied = 0;
         for (const auto& constraint : m_VelocityConstraints)
         {
             auto& bodyA = m_SolverBodies[constraint.indexA];
@@ -569,18 +750,36 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                     
                     Math::Vector2 P = constraint.normal * (C * mass);
                     
-                    if (!bodyA.isStatic)
-                    {
-                        bodyA.position -= P * constraint.invMassA;
-                    }
+                    NYON_DEBUG_LOG_EVERY("  Contact correction: separation=" << point.separation 
+                                      << " normal=(" << constraint.normal.x << "," << constraint.normal.y << ")"
+                                      << " correction=(" << P.x << "," << P.y << ")");
                     
-                    if (!bodyB.isStatic)
+                    // ONLY move dynamic bodies - NEVER move static bodies!
+                    // Move each body based on its inverse mass (lighter bodies move more)
+                    if (!bodyA.isStatic && !bodyB.isStatic)
                     {
+                        // Both dynamic - move both apart
+                        bodyA.position -= P * constraint.invMassA;
                         bodyB.position += P * constraint.invMassB;
+                        correctionsApplied++;
                     }
+                    else if (!bodyA.isStatic)
+                    {
+                        // B is static - only move A away from B
+                        bodyA.position -= P * constraint.invMassA;
+                        correctionsApplied++;
+                    }
+                    else if (!bodyB.isStatic)
+                    {
+                        // A is static - only move B away from A
+                        bodyB.position += P * constraint.invMassB;
+                        correctionsApplied++;
+                    }
+                    // If both are static, don't move anything (shouldn't happen)
                 }
             }
         }
+        NYON_DEBUG_LOG_EVERY("Position constraints solved with " << correctionsApplied << " corrections applied");
     }
 
     void PhysicsPipelineSystem::IntegrateVelocities(float dt)
