@@ -79,51 +79,39 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             
         auto startTime = std::chrono::high_resolution_clock::now();
         
-        // Fixed timestep accumulation
-        m_Accumulator += deltaTime;
-        m_Accumulator = std::min(m_Accumulator, MAX_TIMESTEP);
+        // deltaTime is guaranteed == FIXED_TIMESTEP by Application::Run()
+        // No inner accumulator needed - just execute one physics step
+        NYON_DEBUG_LOG("[PHYSICS] Processing physics step with deltaTime=" << deltaTime);
         
-        NYON_DEBUG_LOG("[PHYSICS] Accumulator=" << m_Accumulator << ", FIXED_TIMESTEP=" << FIXED_TIMESTEP);
+        // Collect active entities
+        m_ActiveEntities.clear();
+        m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
+            if (!body.isStatic) // Only process non-static bodies
+            {
+                m_ActiveEntities.push_back(entityId);
+            }
+        });
         
-        // Process fixed timesteps
-        int stepCount = 0;
-        while (m_Accumulator >= FIXED_TIMESTEP)
-        {
-            stepCount++;
-            NYON_DEBUG_LOG("[PHYSICS] Processing physics step #" << stepCount);
-            
-            // Collect active entities
-            m_ActiveEntities.clear();
-            m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
-                if (!body.isStatic) // Only process non-static bodies
-                {
-                    m_ActiveEntities.push_back(entityId);
-                }
-            });
-            
-            NYON_DEBUG_LOG("[PHYSICS] Found " << m_ActiveEntities.size() << " active entities");
-            
-            // Execute pipeline phases
-            PrepareBodiesForUpdate();
-            BroadPhaseDetection();
-            NarrowPhaseDetection();
-            IslandDetection();
-            ConstraintInitialization();
-            VelocitySolving();
-            PositionSolving();
-            Integration();
-            StoreImpulses();
-            UpdateSleeping();
-            UpdateTransformsFromSolver();
-            
-            m_Accumulator -= FIXED_TIMESTEP;
-        }
+        NYON_DEBUG_LOG("[PHYSICS] Found " << m_ActiveEntities.size() << " active entities");
+        
+        // Execute pipeline phases
+        PrepareBodiesForUpdate();
+        BroadPhaseDetection();
+        NarrowPhaseDetection();
+        IslandDetection();
+        ConstraintInitialization();
+        VelocitySolving();
+        PositionSolving();
+        Integration();
+        StoreImpulses();
+        UpdateSleeping();
+        UpdateTransformsFromSolver();
         
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration<float, std::milli>(endTime - startTime);
         m_Stats.updateTime = duration.count();
         
-        NYON_DEBUG_LOG("[PHYSICS] Physics update completed in " << m_Stats.updateTime << " ms, processed " << stepCount << " steps");
+        NYON_DEBUG_LOG("[PHYSICS] Physics update completed in " << m_Stats.updateTime << " ms");
     }
 
     void PhysicsPipelineSystem::PrepareBodiesForUpdate()
@@ -289,6 +277,11 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         m_ContactManifolds.clear();
         m_ContactMap.clear();
         
+        // Clear world contacts for this frame
+        if (m_PhysicsWorld) {
+            m_PhysicsWorld->contactManifolds.clear();
+        }
+        
         // Test each broad phase pair for actual collision
         for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs)
         {
@@ -302,6 +295,27 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                                   static_cast<uint64_t>(std::max(entityIdA, entityIdB));
                     m_ContactMap[key] = m_ContactManifolds.size();
                     m_ContactManifolds.push_back(std::move(manifold));
+                    
+                    // Also populate the world component for island manager and debug rendering
+                    if (m_PhysicsWorld) {
+                        ECS::ContactManifold worldManifold;
+                        worldManifold.entityIdA = manifold.entityIdA;
+                        worldManifold.entityIdB = manifold.entityIdB;
+                        worldManifold.normal = manifold.normal;
+                        worldManifold.touching = true;
+                        
+                        for (const auto& pt : manifold.points) {
+                            ECS::ContactPoint cp;
+                            cp.position = pt.position;
+                            cp.normal = pt.normal;
+                            cp.separation = pt.separation;
+                            cp.normalImpulse = pt.normalImpulse;
+                            cp.tangentImpulse = pt.tangentImpulse;
+                            worldManifold.points.push_back(std::move(cp));
+                        }
+                        
+                        m_PhysicsWorld->contactManifolds.push_back(std::move(worldManifold));
+                    }
                 }
             }
         }
@@ -816,11 +830,15 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                     float C = m_Config.baumgarte * (-point.separation - m_Config.linearSlop);
                     C = std::min(C, m_Config.maxLinearCorrection);
                     
-                    float mass = constraint.invMassA + constraint.invMassB;
-                    if (mass > 0.0f)
-                    {
-                        mass = 1.0f / mass;
-                    }
+                    // Calculate full effective mass including rotational inertia
+                    float rAcrossN = Math::Vector2::Cross(rA, constraint.normal);
+                    float rBcrossN = Math::Vector2::Cross(rB, constraint.normal);
+                    
+                    float kNormal = constraint.invMassA + constraint.invMassB
+                                  + constraint.invIA * rAcrossN * rAcrossN
+                                  + constraint.invIB * rBcrossN * rBcrossN;
+                    
+                    float mass = (kNormal > 1e-6f) ? 1.0f / kNormal : 0.0f;
                     
                     Math::Vector2 P = constraint.normal * (C * mass);
                     

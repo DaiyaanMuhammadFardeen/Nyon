@@ -174,7 +174,7 @@ namespace Nyon::Physics
             for (const auto& pt : clipPoints)
             {
                 float sep = Dot(normal, pt) - refOffset;
-                if (sep <= separation)
+                if (sep <= 0.0f)  // Fixed: was sep <= separation (minOverlap), which accepts points in front of the face
                 {
                     ECS::ContactPoint cp{};
                     cp.position = pt;
@@ -486,11 +486,22 @@ namespace Nyon::Physics
         else
         {
             // Reference face is on polygon B, find incident face on A
-            int incidentFace = FindIncidentFace(vertsA, normalsA, separatingAxis);
+            int incidentFace = FindIncidentFace(vertsA, normalsA, -separatingAxis);  // Fixed: was +separatingAxis
             int refFace = referenceFace - static_cast<int>(vertsA.size());
             ClipSegmentToLine(manifold.points, vertsB, vertsA, refFace, incidentFace, -separatingAxis, minOverlap);
             // Flip normal direction
             manifold.normal = -separatingAxis;
+        }
+        
+        // Canonicalize normal to point from entity A toward entity B
+        // This ensures consistent behavior regardless of which polygon is the reference
+        Math::Vector2 d = transformB.position - transformA.position;
+        if (Math::Vector2::Dot(d, manifold.normal) < 0.0f) {
+            manifold.normal = -manifold.normal;
+            // Also flip each contact point's normal to match
+            for (auto& cp : manifold.points) {
+                cp.normal = -cp.normal;
+            }
         }
         
         // Store local-space data

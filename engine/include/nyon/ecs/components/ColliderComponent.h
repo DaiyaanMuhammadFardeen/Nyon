@@ -90,7 +90,7 @@ namespace Nyon::ECS
                 for (size_t i = 0; i < vertices.size(); ++i) {
                     size_t next = (i + 1) % vertices.size();
                     Math::Vector2 edge = vertices[next] - vertices[i];
-                    Math::Vector2 normal = {-edge.y, edge.x}; // Perpendicular CCW
+                    Math::Vector2 normal = {edge.y, -edge.x}; // Perpendicular CW for outward normal in Y-up CCW polygon
                     float length = sqrt(normal.x * normal.x + normal.y * normal.y);
                     if (length > 0.0001f) {
                         normal = normal * (1.0f / length);

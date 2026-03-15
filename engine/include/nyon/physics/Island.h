@@ -131,10 +131,10 @@ namespace Nyon::Physics
         std::unordered_map<ECS::EntityID, size_t> m_BodyIslandMap; // bodyId -> island index
         
         // Constants
-        static constexpr float SLEEP_THRESHOLD = 0.5f;      // Velocity threshold for sleeping (pixels/sec)
-        static constexpr float ANGULAR_SLEEP_THRESHOLD = 0.1f; // Angular velocity threshold (rad/sec)
-        static constexpr float TIME_TO_SLEEP = 0.5f;        // Time required to stay below thresholds (seconds)
-        static constexpr float LINEAR_WAKE_THRESHOLD = 2.0f; // Linear velocity to wake up (pixels/sec)
-        static constexpr float ANGULAR_WAKE_THRESHOLD = 0.5f; // Angular velocity to wake up (rad/sec)
+        static constexpr float SLEEP_THRESHOLD = 2.0f;        // Velocity threshold for sleeping (pixels/sec)
+        static constexpr float ANGULAR_SLEEP_THRESHOLD = 0.2f; // Angular velocity threshold (rad/sec)
+        static constexpr float TIME_TO_SLEEP = 0.5f;          // Time required to stay below thresholds (seconds)
+        static constexpr float LINEAR_WAKE_THRESHOLD = 2.0f;   // Linear velocity to wake up (pixels/sec)
+        static constexpr float ANGULAR_WAKE_THRESHOLD = 0.5f;  // Angular velocity to wake up (rad/sec)
     };
 }

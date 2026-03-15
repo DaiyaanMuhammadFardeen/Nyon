@@ -1,4 +1,5 @@
 #include "nyon/graphics/Renderer2D.h"
+#include "nyon/core/Application.h"
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -439,6 +440,34 @@ namespace Nyon::Graphics
         
         if (s_Instance->GLAvailable)
         {
+            // Update projection matrix with current window size
+            // Get window from Application singleton
+            GLFWwindow* window = nullptr;
+            try {
+                Application& app = Application::Get();
+                window = app.GetWindow();
+            } catch (...) {
+                // Application might not be initialized yet
+                window = nullptr;
+            }
+            
+            int w, h;
+            if (window)
+            {
+                glfwGetFramebufferSize(window, &w, &h);
+            }
+            else
+            {
+                // Fallback: try to get from current context
+                w = 1280;
+                h = 720;
+            }
+            
+            if (w > 0 && h > 0)
+            {
+                s_Instance->UpdateProjectionMatrix(static_cast<float>(w), static_cast<float>(h));
+            }
+            
             s_Instance->UpdateViewMatrix();
             
             // Enable blending by default
