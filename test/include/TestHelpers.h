@@ -1,20 +1,16 @@
 #pragma once
-
 #include <gtest/gtest.h>
 #include <glm/glm.hpp>
 #include "TestLogger.h"
 #include "nyon/math/Vector2.h"
 #include "nyon/math/Vector3.h"
-
 /**
  * @brief Custom assertions and helper functions for Nyon engine testing.
  * 
  * Provides specialized assertions for vector comparison, floating-point equality,
  * and ECS component testing with detailed error reporting.
  */
-namespace NyonTest
-{
-    // Floating point comparison with epsilon
+namespace NyonTest {
     inline ::testing::AssertionResult FloatNear(float a, float b, float epsilon = 1e-5f)
     {
         float diff = std::abs(a - b);
@@ -27,8 +23,6 @@ namespace NyonTest
                 << " Epsilon: " << epsilon;
         }
     }
-
-    // Vector2 comparison
     inline ::testing::AssertionResult Vector2Near(const Nyon::Math::Vector2& a, 
                                                  const Nyon::Math::Vector2& b, 
                                                  float epsilon = 1e-5f)
@@ -43,8 +37,6 @@ namespace NyonTest
                 << "  Epsilon: " << epsilon;
         }
     }
-
-    // Vector3 comparison
     inline ::testing::AssertionResult Vector3Near(const Nyon::Math::Vector3& a, 
                                                  const Nyon::Math::Vector3& b, 
                                                  float epsilon = 1e-5f)
@@ -61,9 +53,6 @@ namespace NyonTest
                 << "  Epsilon: " << epsilon;
         }
     }
-
-    // Utility function to create test entities
-    // Commented out due to namespace issues
     /*
     inline Nyon::ECS::EntityID CreateTestEntity(Nyon::ECS::EntityManager& entityManager)
     {
@@ -74,17 +63,13 @@ namespace NyonTest
         return entity;
     }
     */
-
-    // Performance measurement helper
-    class PerformanceTimer
-    {
+    class PerformanceTimer {
     public:
         PerformanceTimer(const std::string& testName) : m_TestName(testName)
         {
             m_Start = std::chrono::high_resolution_clock::now();
             LOG_INFO("Starting performance test: " + testName);
         }
-
         ~PerformanceTimer()
         {
             auto end = std::chrono::high_resolution_clock::now();
@@ -92,16 +77,12 @@ namespace NyonTest
             LOG_INFO("Performance test '" + m_TestName + "' completed in " + 
                     std::to_string(duration.count()) + " microseconds");
         }
-
     private:
         std::string m_TestName;
         std::chrono::high_resolution_clock::time_point m_Start;
     };
-
     #define PERF_TIMER(name) PerformanceTimer timer__(name)
 }
-
-// Custom assertion macros
 #define ASSERT_FLOAT_NEAR(a, b, eps) ASSERT_TRUE(NyonTest::FloatNear(a, b, eps))
 #define EXPECT_FLOAT_NEAR(a, b, eps) EXPECT_TRUE(NyonTest::FloatNear(a, b, eps))
 #define ASSERT_VECTOR2_NEAR(a, b, eps) ASSERT_TRUE(NyonTest::Vector2Near(a, b, eps))

@@ -1,5 +1,4 @@
 #include "SimplePhysicsDemo.h"
-
 int main()
 {
     SimplePhysicsDemo demo;

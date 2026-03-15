@@ -1,18 +1,14 @@
 #include "nyon/ecs/SystemManager.h"
-
-namespace Nyon::ECS
-{
+namespace Nyon::ECS {
     SystemManager::SystemManager(EntityManager& entityManager, ComponentStore& componentStore)
         : m_EntityManager(&entityManager)
         , m_ComponentStore(&componentStore)
     {
     }
-    
     SystemManager::~SystemManager()
     {
         Shutdown();
     }
-    
     void SystemManager::Update(float deltaTime)
     {
         for (auto& system : m_Systems)
@@ -20,7 +16,6 @@ namespace Nyon::ECS
             system->Update(deltaTime);
         }
     }
-    
     void SystemManager::Shutdown()
     {
         for (auto& system : m_Systems)
