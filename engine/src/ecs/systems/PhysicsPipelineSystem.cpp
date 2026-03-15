@@ -53,30 +53,50 @@ namespace Nyon::ECS
 
         auto startTime = std::chrono::high_resolution_clock::now();
 
-        // deltaTime is guaranteed == FIXED_TIMESTEP by Application::Run()
-        // No inner accumulator needed - just execute one physics step
-
-        // Collect active entities
-        m_ActiveEntities.clear();
+        // === IMPLEMENT SUB-STEPPING FOR HIGH-SPEED BODIES ===
+        // Check if any dynamic body exceeds speed threshold
+        float maxSpeedSquared = 0.0f;
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
-                if (!body.isStatic) // Only process non-static bodies
-                {
-                m_ActiveEntities.push_back(entityId);
+                if (!body.isStatic) {
+                    float speedSq = body.velocity.LengthSquared();
+                    if (speedSq > maxSpeedSquared) {
+                        maxSpeedSquared = speedSq;
+                    }
                 }
                 });
+        
+        // Sub-step threshold: 400 px/s (adjustable based on tuning)
+        constexpr float SUBSTEP_SPEED_THRESHOLD = 400.0f;
+        int numSubSteps = 1;
+        if (std::sqrt(maxSpeedSquared) > SUBSTEP_SPEED_THRESHOLD) {
+            numSubSteps = 2;  // Split into 2 sub-steps
+        }
+        
+        float subStepDt = deltaTime / numSubSteps;
+        
+        // Execute physics pipeline with sub-stepping
+        for (int step = 0; step < numSubSteps; ++step) {
+            // Collect active entities for each sub-step
+            m_ActiveEntities.clear();
+            m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
+                    if (!body.isStatic) {
+                        m_ActiveEntities.push_back(entityId);
+                    }
+                    });
 
-        // Execute pipeline phases
-        PrepareBodiesForUpdate();
-        BroadPhaseDetection();
-        NarrowPhaseDetection();
-        IslandDetection();
-        ConstraintInitialization();
-        VelocitySolving();
-        PositionSolving();
-        Integration();
-        StoreImpulses();
-        UpdateSleeping();
-        UpdateTransformsFromSolver();
+            // Execute pipeline phases for this sub-step
+            PrepareBodiesForUpdate();
+            BroadPhaseDetection();
+            NarrowPhaseDetection();
+            IslandDetection();
+            ConstraintInitialization();
+            VelocitySolving();
+            PositionSolving();
+            Integration();
+            StoreImpulses();
+            UpdateSleeping();
+            UpdateTransformsFromSolver();
+        }
 
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration<float, std::milli>(endTime - startTime);
@@ -140,8 +160,8 @@ namespace Nyon::ECS
                     }
 
                     // Calculate and set inertia from shape geometry
-                    float unitInertia = collider.CalculateInertiaForUnitDensity();
-                    float calculatedInertia = unitInertia * density;
+                    float unitInertia = collider.CalculateInertiaPerUnitMass();
+                    float calculatedInertia = unitInertia * calculatedMass;
 
                     // Only update inertia if it hasn't been explicitly set (i.e., still default 1.0)
                     // or if the calculated inertia is significantly different
@@ -375,12 +395,27 @@ namespace Nyon::ECS
                 // Mix restitution using maximum (standard approach)
                 vc.restitution = std::max(colliderA.material.restitution, colliderB.material.restitution);
 
+                // Precompute world centroids for this constraint (used by all points)
+                float initCosA = std::cos(bodyA.angle);
+                float initSinA = std::sin(bodyA.angle);
+                Math::Vector2 initWorldCentroidA = bodyA.position + Math::Vector2{
+                    bodyA.localCenter.x * initCosA - bodyA.localCenter.y * initSinA,
+                    bodyA.localCenter.x * initSinA + bodyA.localCenter.y * initCosA
+                };
+
+                float initCosB = std::cos(bodyB.angle);
+                float initSinB = std::sin(bodyB.angle);
+                Math::Vector2 initWorldCentroidB = bodyB.position + Math::Vector2{
+                    bodyB.localCenter.x * initCosB - bodyB.localCenter.y * initSinB,
+                    bodyB.localCenter.x * initSinB + bodyB.localCenter.y * initCosB
+                };
+
                 // Compute effective mass for each contact point
                 for (auto& point : vc.points)
                 {
-                    // Moment arms from body centers to contact point
-                    Math::Vector2 rA = point.position - bodyA.position;
-                    Math::Vector2 rB = point.position - bodyB.position;
+                    // Moment arms from body centers of mass to contact point
+                    Math::Vector2 rA = point.position - initWorldCentroidA;
+                    Math::Vector2 rB = point.position - initWorldCentroidB;
 
                     // Cross products with normal (scalar, since 2D)
                     float rAcrossN = Math::Vector2::Cross(rA, vc.normal);
@@ -792,6 +827,21 @@ namespace Nyon::ECS
             const auto& bodyA = m_SolverBodies[constraint.indexA];
             const auto& bodyB = m_SolverBodies[constraint.indexB];
 
+            // Compute world centroids to be used as pivot points for angular velocity calculations
+            float cosA = std::cos(bodyA.angle);
+            float sinA = std::sin(bodyA.angle);
+            Math::Vector2 worldCentroidA = bodyA.position + Math::Vector2{
+                bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
+                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
+            };
+
+            float cosB = std::cos(bodyB.angle);
+            float sinB = std::sin(bodyB.angle);
+            Math::Vector2 worldCentroidB = bodyB.position + Math::Vector2{
+                bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
+                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
+            };
+
             for (auto& point : constraint.points)
             {
                 // Apply previous impulses
@@ -802,14 +852,14 @@ namespace Nyon::ECS
                 {
                     m_SolverBodies[constraint.indexA].velocity -= P * constraint.invMassA;
                     m_SolverBodies[constraint.indexA].angularVelocity -=
-                        constraint.invIA * Math::Vector2::Cross(point.position - bodyA.position, P);
+                        constraint.invIA * Math::Vector2::Cross(point.position - worldCentroidA, P);
                 }
 
                 if (!bodyB.isStatic)
                 {
                     m_SolverBodies[constraint.indexB].velocity += P * constraint.invMassB;
                     m_SolverBodies[constraint.indexB].angularVelocity +=
-                        constraint.invIB * Math::Vector2::Cross(point.position - bodyB.position, P);
+                        constraint.invIB * Math::Vector2::Cross(point.position - worldCentroidB, P);
                 }
             }
         }
@@ -833,11 +883,26 @@ namespace Nyon::ECS
             auto& bodyA = m_SolverBodies[constraint.indexA];
             auto& bodyB = m_SolverBodies[constraint.indexB];
 
+            // Compute live world centroids for this iteration
+            float cosA = std::cos(bodyA.angle);
+            float sinA = std::sin(bodyA.angle);
+            Math::Vector2 liveWorldCentroidA = bodyA.position + Math::Vector2{
+                bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
+                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
+            };
+
+            float cosB = std::cos(bodyB.angle);
+            float sinB = std::sin(bodyB.angle);
+            Math::Vector2 liveWorldCentroidB = bodyB.position + Math::Vector2{
+                bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
+                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
+            };
+
             for (auto& point : constraint.points)
             {
-                // Recompute rA, rB from LIVE body positions each iteration:
-                Math::Vector2 rA = point.position - bodyA.position;
-                Math::Vector2 rB = point.position - bodyB.position;
+                // Recompute rA, rB from LIVE body centers of mass each iteration:
+                Math::Vector2 rA = point.position - liveWorldCentroidA;
+                Math::Vector2 rB = point.position - liveWorldCentroidB;
 
                 // Use LIVE body velocities (not the stale snapshot):
                 Math::Vector2 dv = bodyB.velocity + Math::Vector2::Cross(bodyB.angularVelocity, rB)
@@ -906,16 +971,31 @@ namespace Nyon::ECS
             auto& bodyA = m_SolverBodies[constraint.indexA];
             auto& bodyB = m_SolverBodies[constraint.indexB];
 
+            // Precompute world centroids for this position correction iteration
+            float cosA = std::cos(bodyA.angle);
+            float sinA = std::sin(bodyA.angle);
+            Math::Vector2 worldCentroidA = bodyA.position + Math::Vector2{
+                bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
+                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
+            };
+
+            float cosB = std::cos(bodyB.angle);
+            float sinB = std::sin(bodyB.angle);
+            Math::Vector2 worldCentroidB = bodyB.position + Math::Vector2{
+                bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
+                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
+            };
+
             for (const auto& point : constraint.points)
             {
                 if (point.separation < -m_Config.linearSlop)
                 {
-                    Math::Vector2 rA = point.position - bodyA.position;
-                    Math::Vector2 rB = point.position - bodyB.position;
+                    Math::Vector2 rA = point.position - worldCentroidA;
+                    Math::Vector2 rB = point.position - worldCentroidB;
 
                     // Position correction
                     float C = m_Config.baumgarte * (-point.separation - m_Config.linearSlop);
-                    C = std::min(C, m_Config.maxLinearCorrection);
+                    C = std::clamp(C, 0.0f, m_Config.maxLinearCorrection);
 
                     // Calculate full effective mass including rotational inertia
                     float rAcrossN = Math::Vector2::Cross(rA, constraint.normal);

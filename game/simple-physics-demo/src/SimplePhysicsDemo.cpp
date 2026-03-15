@@ -6,7 +6,6 @@
 #include "nyon/ecs/components/ColliderComponent.h"
 #include "nyon/ecs/components/RenderComponent.h"
 #include "nyon/ecs/components/BehaviorComponent.h"
-#include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/utils/InputManager.h"
 
 #include <iostream>
@@ -23,8 +22,6 @@ using namespace Nyon;
 SimplePhysicsDemo::SimplePhysicsDemo()
     : ECSApplication("Nyon – Simple Physics Demo", 1280, 720)
 {
-    // Disable debug renderer for this demo
-    m_EnableDebugRenderer = false;
 }
 
 // ============================================================================
@@ -37,6 +34,7 @@ void SimplePhysicsDemo::OnECSStart()
 {
     CreateWorld();
     CreatePlatform();
+    CreateSlopedPlatform();
     CreatePlayerQuad();
 }
 
@@ -132,8 +130,8 @@ void SimplePhysicsDemo::CreateWorld()
     // NOTE: PhysicsPipelineSystem currently reads m_Config.linearSlop (0.005)
     // rather than this field.  Fix that pipeline bug for this to take effect,
     // but set it here so the world component is already correct.
-    world.linearSlop            = 0.5f;
-    world.maxLinearCorrection   = 5.0f;   // pixels per step (was 0.2 — too tight)
+    world.linearSlop            = 0.05f;
+    world.maxLinearCorrection   = 2.0f;   // pixels per step (was 0.2 — too tight)
 
     world.enableSleep           = true;
     world.enableWarmStarting    = true;   // no-op until StoreImpulses() is implemented
@@ -186,7 +184,7 @@ void SimplePhysicsDemo::CreatePlatform()
 
     ECS::ColliderComponent platformCollider(platformShape);
     platformCollider.material.friction    = 0.6f;
-    platformCollider.material.restitution = 0.1f;
+    platformCollider.material.restitution = 0.5f;
     platformCollider.material.density     = 0.0f;  // irrelevant for static body
 
     // ── render component ─────────────────────────────────────────────────────
@@ -208,6 +206,83 @@ void SimplePhysicsDemo::CreatePlatform()
     cs.AddComponent(m_PlatformEntity, std::move(body));
     cs.AddComponent(m_PlatformEntity, std::move(platformCollider));
     cs.AddComponent(m_PlatformEntity, std::move(platformRender));
+}
+
+// ============================================================================
+//  CreateSlopedPlatform  –  static platform with a slope
+// ============================================================================
+void SimplePhysicsDemo::CreateSlopedPlatform()
+{
+    auto& entities = GetEntityManager();
+    auto& cs       = GetComponentStore();
+
+    // Slope 1: positioned below and to the left of main platform, rotated -25 degrees
+    ECS::EntityID slope1Entity = entities.CreateEntity();
+
+    ECS::TransformComponent t1;
+    t1.position         = { 150.0f, 80.0f };  // Below main platform (y=100), left side
+    t1.previousPosition = t1.position;
+    // Rotate by -25 degrees (about -0.436 radians)
+    t1.rotation         = -0.436332f;
+    t1.previousRotation = t1.rotation;
+
+    ECS::PhysicsBodyComponent body1;
+    body1.isStatic = true;
+    body1.UpdateMassProperties();
+
+    ECS::ColliderComponent::PolygonShape shape1({
+        { -250.0f, -25.0f },
+        {  250.0f, -25.0f },
+        {  250.0f,  25.0f },
+        { -250.0f,  25.0f }
+    });
+
+    ECS::ColliderComponent collider1(shape1);
+    collider1.material.friction    = 0.5f;
+    collider1.material.restitution = 0.5f;
+    collider1.material.density     = 0.0f;
+
+    ECS::RenderComponent render1({ 500.0f, 50.0f }, { 0.4f, 0.4f, 0.8f });
+    render1.origin = { 250.0f, 25.0f };
+
+    cs.AddComponent(slope1Entity, std::move(t1));
+    cs.AddComponent(slope1Entity, std::move(body1));
+    cs.AddComponent(slope1Entity, std::move(collider1));
+    cs.AddComponent(slope1Entity, std::move(render1));
+    
+    // Slope 2: mirrored, positioned below and to the right of main platform, rotated +25 degrees
+    ECS::EntityID slope2Entity = entities.CreateEntity();
+
+    ECS::TransformComponent t2;
+    t2.position         = { 1130.0f, 80.0f };  // Below main platform (y=100), right side
+    t2.previousPosition = t2.position;
+    // Rotate by +25 degrees (about 0.436 radians)
+    t2.rotation         = 0.436332f;
+    t2.previousRotation = t2.rotation;
+
+    ECS::PhysicsBodyComponent body2;
+    body2.isStatic = true;
+    body2.UpdateMassProperties();
+
+    ECS::ColliderComponent::PolygonShape shape2({
+        { -250.0f, -25.0f },
+        {  250.0f, -25.0f },
+        {  250.0f,  25.0f },
+        { -250.0f,  25.0f }
+    });
+
+    ECS::ColliderComponent collider2(shape2);
+    collider2.material.friction    = 0.7f;  // Higher friction for contrast
+    collider2.material.restitution = 0.5f;
+    collider2.material.density     = 0.0f;
+
+    ECS::RenderComponent render2({ 500.0f, 50.0f }, { 0.8f, 0.4f, 0.4f });
+    render2.origin = { 250.0f, 25.0f };
+
+    cs.AddComponent(slope2Entity, std::move(t2));
+    cs.AddComponent(slope2Entity, std::move(body2));
+    cs.AddComponent(slope2Entity, std::move(collider2));
+    cs.AddComponent(slope2Entity, std::move(render2));
 }
 
 // ============================================================================
@@ -239,7 +314,7 @@ void SimplePhysicsDemo::CreatePlayerQuad()
 
     ECS::ColliderComponent playerCollider(playerShape);
     playerCollider.material.friction    = 0.4f;
-    playerCollider.material.restitution = 0.1f;  // Low restitution for better control
+    playerCollider.material.restitution = 0.5f;  // Low restitution for better control
     playerCollider.material.density     = 0.0008f;
 
     // ── physics body ─────────────────────────────────────────────────────────
@@ -250,15 +325,15 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     {
         float area    = playerCollider.CalculateArea();           // 2500.0 px²
         float density = (area > 0.0f) ? body.mass / area : 0.0f;
-        body.inertia  = playerCollider.CalculateInertiaForUnitDensity() * density;
+        body.inertia  = playerCollider.CalculateInertiaPerUnitMass() * body.mass;
     }
 
     body.UpdateMassProperties();
     body.isAwake    = true;
     body.allowSleep = false;  // Player should never sleep
 
-    // Lock rotation for player to prevent uncontrollable spinning
-    body.motionLocks.lockRotation = true;
+    // Free rotation for player to allow realistic physics interactions
+    body.motionLocks.lockRotation = false;
 
     // ── render component ─────────────────────────────────────────────────────
     ECS::RenderComponent playerRender({ 50.0f, 50.0f }, { 1.0f, 0.5f, 0.0f });  // Orange color
@@ -305,7 +380,7 @@ void SimplePhysicsDemo::CreateSpawnedQuad(float x, float y)
 
     ECS::ColliderComponent spawnCollider(spawnShape);
     spawnCollider.material.friction    = 0.4f;
-    spawnCollider.material.restitution = 0.2f;
+    spawnCollider.material.restitution = 0.5f;
     spawnCollider.material.density     = 0.0008f;
 
     // ── physics body ─────────────────────────────────────────────────────────
@@ -315,7 +390,7 @@ void SimplePhysicsDemo::CreateSpawnedQuad(float x, float y)
     {
         float area    = spawnCollider.CalculateArea();
         float density = (area > 0.0f) ? body.mass / area : 0.0f;
-        body.inertia  = spawnCollider.CalculateInertiaForUnitDensity() * density;
+        body.inertia  = spawnCollider.CalculateInertiaPerUnitMass() * body.mass;
     }
 
     body.UpdateMassProperties();
@@ -369,9 +444,9 @@ void SimplePhysicsDemo::HandlePlayerInput(float deltaTime)
     // Jump (W) - only when grounded (using contact manifold ground detection)
     if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_W) && IsPlayerGrounded())
     {
-        body.velocity.y = PLAYER_JUMP_FORCE;
+        // Apply impulse by changing velocity directly, taking into account the mass
+        body.velocity.y += PLAYER_JUMP_FORCE / body.mass;
         body.SetAwake(true);
-        std::cerr << "[DEMO] Jump triggered (vel=" << body.velocity.y << ")\n";
     }
 
     // NOTE: PhysicsPipelineSystem already applies world gravity.
@@ -411,12 +486,19 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
 
     ECS::ColliderComponent circleCollider(circleShape);
     circleCollider.material.friction    = 0.4f;
-    circleCollider.material.restitution = 0.2f;
+    circleCollider.material.restitution = 0.5f;
     circleCollider.material.density     = 0.0008f;
 
     // Physics body
     ECS::PhysicsBodyComponent body;
     body.mass = 2.0f;
+    
+    // Calculate inertia from collider shape
+    {
+        float area = circleCollider.CalculateArea();
+        body.inertia = circleCollider.CalculateInertiaPerUnitMass() * body.mass;
+    }
+    
     body.UpdateMassProperties();
     body.isAwake = true;
     body.allowSleep = true;
@@ -424,6 +506,7 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
     // Render
     ECS::RenderComponent render({ radius * 2.0f, radius * 2.0f }, { 0.5f, 1.0f, 0.5f });
     render.origin = { radius, radius };
+    render.shapeType = ECS::RenderComponent::ShapeType::Circle;
 
     cs.AddComponent(spawnedEntity, std::move(t));
     cs.AddComponent(spawnedEntity, std::move(body));
@@ -465,26 +548,21 @@ bool SimplePhysicsDemo::IsPlayerGrounded()
 
         // Consider it “ground” if the contact normal has a large upward component
         float dotUp = Math::Vector2::Dot(contactNormal, up);
-        std::cerr << "[DEMO] IsPlayerGrounded: Manifold normal=(" << contactNormal.x << ", " << contactNormal.y << ") dotUp=" << dotUp << "\n";
         if (dotUp > 0.7f)
         {
             // Also ensure the contact points are not far apart (i.e., actually touching)
             for (const auto& pt : manifold.points)
             {
-                std::cerr << "[DEMO] IsPlayerGrounded: Point separation=" << pt.separation << "\n";
                 if (pt.separation < 1.0f)
                 {
-                    std::cerr << "[DEMO] IsPlayerGrounded: Grounded!\n";
                     return true;
                 }
             }
         }
     }
 
-    std::cerr << "[DEMO] IsPlayerGrounded: Not grounded\n";
     return false;
 }
-
 
 // ============================================================================
 //  SpawnQuadAtMousePosition  –  convert mouse coordinates to world space and spawn

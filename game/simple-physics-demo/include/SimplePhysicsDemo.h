@@ -32,6 +32,7 @@ private:
     // ---------- setup helpers -----------------------------------------------
     void CreateWorld();
     void CreatePlatform();
+    void CreateSlopedPlatform();
     void CreatePlayerQuad();
     void CreateSpawnedQuad(float x, float y);
     void CreateSpawnedCircle(float x, float y);
@@ -74,6 +75,6 @@ private:
     
     // Player movement configuration
     static constexpr float PLAYER_MOVE_SPEED = 300.0f;  // pixels per second
-    static constexpr float PLAYER_JUMP_FORCE = 600.0f;  // impulse force
+    static constexpr float PLAYER_JUMP_FORCE = 900.0f;  // impulse: 900/mass=450 pix/s vs 16 pix/step gravity
     static constexpr float GRAVITY_SCALE     = 980.0f;  // gravity in pixels/s²
 };

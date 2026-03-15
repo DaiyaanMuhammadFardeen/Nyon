@@ -47,11 +47,25 @@ namespace Nyon::ECS
     void DebugRenderSystem::NyonDebugRenderer::DrawCircleOutline(const Math::Vector2& center, float radius, 
                                                                 const Math::Vector3& color)
     {
-        // Draw circle outline as a quad outline for now
-        // This is a simplification - proper circle would need multiple line segments
-        Math::Vector2 size(radius * 2.0f, radius * 2.0f);
-        Math::Vector2 origin(radius, radius);
-        Graphics::Renderer2D::DrawQuad(center, size, origin, color);
+        // Draw proper circle outline using 16 line segments
+        constexpr float PI = 3.14159265359f;
+        constexpr int SEGMENTS = 16;
+        
+        for (int i = 0; i < SEGMENTS; ++i) {
+            float a0 = (2.0f * PI * i) / SEGMENTS;
+            float a1 = (2.0f * PI * (i + 1)) / SEGMENTS;
+            
+            Math::Vector2 p0 = {
+                center.x + radius * static_cast<float>(cos(a0)),
+                center.y + radius * static_cast<float>(sin(a0))
+            };
+            Math::Vector2 p1 = {
+                center.x + radius * static_cast<float>(cos(a1)),
+                center.y + radius * static_cast<float>(sin(a1))
+            };
+            
+            Graphics::Renderer2D::DrawLine(p0, p1, color);
+        }
     }
     
     void DebugRenderSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore)

@@ -534,8 +534,13 @@ namespace Nyon::Physics
         }
         
         // Canonicalize normal to point from entity A toward entity B
-        // This ensures consistent behavior regardless of which polygon is the reference
-        Math::Vector2 d = transformB.position - transformA.position;
+        // This ensures consistent behavior regardless of which polygon is the reference.
+        // We use the shape centroids instead of raw transform positions to ensure
+        // correct orientation even for highly asymmetric polygons or significant offsets.
+        Math::Vector2 centroidA = transformA.position + Rotate(polyA.centroid, transformA.rotation);
+        Math::Vector2 centroidB = transformB.position + Rotate(polyB.centroid, transformB.rotation);
+        Math::Vector2 d = centroidB - centroidA;
+        
         if (Math::Vector2::Dot(d, manifold.normal) < 0.0f) {
             manifold.normal = -manifold.normal;
             // Also flip each contact point's normal and separation to match

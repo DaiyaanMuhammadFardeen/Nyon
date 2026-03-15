@@ -66,9 +66,9 @@ namespace Nyon::ECS
         // === POSITION CORRECTION PARAMETERS ===
         float baumgarteBeta = 0.2f;                 // Baumgarte stabilization factor
         float linearSlop = 0.5f;                    // Linear slop for position correction (half a pixel for pixel-unit worlds)
-        float maxLinearCorrection = 0.2f;           // Maximum linear position correction
-        float maxAngularCorrection = 0.1f;          // Maximum angular position correction
-        float maxPenetrationCorrection = 50.0f;     // Maximum penetration depth correction
+        float maxLinearCorrection = 1000.0f;        // Very large linear position correction for impenetrable solid bodies
+        float maxAngularCorrection = 0.5f;          // Maximum angular position correction
+        float maxPenetrationCorrection = 1000.0f;   // Very large penetration depth correction
         
         // === SLEEP PARAMETERS ===
         float sleepLinearThreshold = 0.01f;         // Linear velocity threshold for sleeping

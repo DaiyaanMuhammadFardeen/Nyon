@@ -7,8 +7,8 @@
 
 // Forward declarations
 namespace Nyon::ECS {
-    class DebugRenderSystem;
     class RenderSystem;
+    class DebugRenderSystem;
 }
 #include <memory>
 
@@ -31,18 +31,12 @@ namespace Nyon
         ECS::ComponentStore& GetComponentStore() { return m_ComponentStore; }
         ECS::SystemManager& GetSystemManager() { return m_SystemManager; }
         
-        // Get DebugRenderSystem if it exists
-        ECS::DebugRenderSystem* GetDebugRenderSystem();
-        
     protected:
         
         // Methods that can be overridden by games
         virtual void OnECSStart() {}  // Called after ECS initialization
         virtual void OnECSUpdate(float deltaTime) {}  // Called after ECS systems update (user logic hook)
         virtual void OnECSFixedUpdate(float deltaTime) {}  // Called during fixed-step update (physics logic hook)
-        
-        // Flag to enable/disable debug renderer (can be set by derived classes)
-        bool m_EnableDebugRenderer = true;
         
         // Override base Application methods
         void OnStart() override final;
@@ -55,7 +49,8 @@ namespace Nyon
         ECS::SystemManager m_SystemManager;
         
         bool m_ECSInitialized;
-        ECS::DebugRenderSystem* m_DebugRenderSystem = nullptr;  // Cached pointer to avoid dynamic_cast every frame
         std::unique_ptr<ECS::RenderSystem> m_RenderSystem;  // Separate render system - only called during interpolation
+        std::unique_ptr<ECS::DebugRenderSystem> m_DebugRenderSystem;  // Debug overlay renderer
+        bool m_DebugOverlayEnabled = false;  // F1 toggle flag
     };
 }
