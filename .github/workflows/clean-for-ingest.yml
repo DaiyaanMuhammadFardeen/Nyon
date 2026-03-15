@@ -32,4 +32,4 @@ jobs:
           git checkout -B Temporary
           git add .
           git commit -m "Auto-strip comments from main" || echo "No changes to commit"
-          git push origin clean-branch --force
+          git push origin Temporary --force
