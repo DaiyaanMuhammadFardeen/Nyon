@@ -1,12 +1,9 @@
 #pragma once
-
 #include "nyon/ecs/System.h"
 #include "nyon/ecs/components/PhysicsBodyComponent.h"
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/ecs/components/PhysicsWorldComponent.h"
-
-namespace Nyon::ECS
-{
+namespace Nyon::ECS {
     /**
      * @brief Physics integration system that handles falling body physics simulation.
      * 
@@ -20,74 +17,46 @@ namespace Nyon::ECS
      * Gravity is selectively applied to prevent perpetual sinking of grounded objects.
      * Sleep system considers contact support to ensure stable resting objects can sleep.
      */
-    class PhysicsIntegrationSystem : public System
-    {
+    class PhysicsIntegrationSystem : public System {
     public:
-        void Initialize(EntityManager& entityManager, ComponentStore& componentStore) override
-        {
+        void Initialize(EntityManager& entityManager, ComponentStore& componentStore) override {
             System::Initialize(entityManager, componentStore);
         }
-        
-        void Update(float deltaTime) override
-        {
+        void Update(float deltaTime) override {
             if (!m_EntityManager || !m_ComponentStore) return;
-            
-            // Get physics world component for gravity and settings
             const auto& worldEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsWorldComponent>();
             if (worldEntities.empty()) return;
-            
             const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(worldEntities[0]);
-            
-            // Get all physics bodies
             const auto& physicsEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
-            
-            // Reset grounded state for this step and prepare transforms for interpolation
             for (EntityID entity : physicsEntities)
             {
                 auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entity);
                 body.UpdateGroundedState(false);
-                
                 if (m_ComponentStore->HasComponent<TransformComponent>(entity))
                 {
                     auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entity);
                     transform.PrepareForUpdate();
                 }
             }
-            
-            // First pass: Apply forces and integrate velocities
             for (EntityID entity : physicsEntities)
             {
                 if (!m_ComponentStore->HasComponent<TransformComponent>(entity)) continue;
-                
                 auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entity);
                 auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entity);
-                
-                // Skip static and sleeping bodies
                 if (body.isStatic || !body.isAwake) continue;
-                
                 IntegrateVelocity(body, transform, world.gravity, deltaTime);
             }
-            
-            // Second pass: Integrate positions
             for (EntityID entity : physicsEntities)
             {
                 if (!m_ComponentStore->HasComponent<TransformComponent>(entity)) continue;
-                
                 auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entity);
                 auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entity);
-                
-                // Skip static and sleeping bodies
                 if (body.isStatic || !body.isAwake) continue;
-                
                 IntegratePosition(body, transform, deltaTime);
             }
         }
-        
-        void Shutdown() override
-        {
-            // Cleanup if needed
+        void Shutdown() override {
         }
-        
     private:
         /**
          * @brief Integrate velocity using explicit Euler integration
@@ -96,80 +65,49 @@ namespace Nyon::ECS
         void IntegrateVelocity(PhysicsBodyComponent& body, TransformComponent& transform,
                               const Math::Vector2& gravity, float deltaTime)
         {
-            // Apply gravity always - constraint solver handles contact forces
             Math::Vector2 acceleration = gravity;
-            
-            // Add force contribution (F/m)
             if (body.inverseMass > 0.0f)
             {
                 acceleration = acceleration + body.force * body.inverseMass;
             }
-            
-            // Apply aerodynamic drag (physically correct: F = -drag * v², a = -drag * v²/mass)
-            // Using proper physics: drag force = -drag_coefficient * v² * v_direction
-            // drag_coefficient has units of mass/length (making force have correct units)
             if (body.drag > 0.0f && body.velocity.LengthSquared() > 0.0f)
             {
-                // Physically correct drag force calculation
                 float speed = body.velocity.Length();
                 Math::Vector2 dragDirection = body.velocity.Normalize();
-                float dragForceMagnitude = body.drag * speed * speed; // F = c * v²
+                float dragForceMagnitude = body.drag * speed * speed;  
                 Math::Vector2 dragForce = dragDirection * (-dragForceMagnitude);
-                
-                // Convert force to acceleration: a = F/m
                 Math::Vector2 dragAcceleration = dragForce * body.inverseMass;
                 acceleration = acceleration + dragAcceleration;
             }
-            
-            // Update linear velocity: v = v0 + a * dt
             Math::Vector2 oldVelocity = body.velocity;
             body.velocity = body.velocity + acceleration * deltaTime;
-            
-            // Clamp to maximum linear speed
             float speedSq = body.velocity.LengthSquared();
             if (speedSq > body.maxLinearSpeed * body.maxLinearSpeed)
             {
                 body.velocity = body.velocity.Normalize() * body.maxLinearSpeed;
             }
-            
-            // Update angular velocity: ω = ω0 + (τ/I) * dt
             float angularAcceleration = body.torque * body.inverseInertia;
-            
-            // Apply angular damping
             if (body.angularDamping > 0.0f)
             {
                 angularAcceleration -= body.angularVelocity * body.angularDamping;
             }
-            
             body.angularVelocity += angularAcceleration * deltaTime;
-            
-            // Clamp angular velocity
             if (body.angularVelocity > body.maxAngularSpeed)
                 body.angularVelocity = body.maxAngularSpeed;
             else if (body.angularVelocity < -body.maxAngularSpeed)
                 body.angularVelocity = -body.maxAngularSpeed;
-            
-            // Clear accumulated forces for next frame
             body.ClearForces();
-            
-            // Update sleep state based on velocity
             UpdateSleepState(body, deltaTime);
         }
-        
         /**
          * @brief Integrate position using updated velocities
          * Following Box2D's approach: x = x0 + v * dt
          */
         void IntegratePosition(PhysicsBodyComponent& body, TransformComponent& transform, float deltaTime)
         {
-            // Update position: x = x0 + v * dt
             transform.position = transform.position + body.velocity * deltaTime;
-            
-            // Update rotation: θ = θ0 + ω * dt
-            // No wrapping needed - angles can accumulate beyond 2π
             transform.rotation += body.angularVelocity * deltaTime;
         }
-        
         /**
          * @brief Update body sleep state based on activity level and contact support
          * Following Box2D's contact-aware sleep mechanism
@@ -177,28 +115,17 @@ namespace Nyon::ECS
         void UpdateSleepState(PhysicsBodyComponent& body, float deltaTime)
         {
             if (!body.allowSleep) return;
-            
-            // Check if body is moving slowly enough to sleep
             float linearSpeedSq = body.velocity.LengthSquared();
             float angularSpeed = fabs(body.angularVelocity);
-            
-            // Additional check: verify body is properly supported by contacts
-            // that oppose gravity before allowing sleep
             bool isProperlySupported = IsBodyProperlySupported(body);
-            
             if (linearSpeedSq > body.LINEAR_SLEEP_TOLERANCE * body.LINEAR_SLEEP_TOLERANCE ||
                 angularSpeed > body.ANGULAR_SLEEP_TOLERANCE ||
                 !isProperlySupported)
             {
-                // Body is still active or not properly supported
                 body.sleepTimer = 0.0f;
             }
-            else
-            {
-                // Body is nearly stationary and properly supported, accumulate sleep time
+            else {
                 body.sleepTimer += deltaTime;
-                
-                // Put to sleep if inactive long enough
                 if (body.sleepTimer >= body.TIME_TO_SLEEP)
                 {
                     body.SetAwake(false);
@@ -207,18 +134,13 @@ namespace Nyon::ECS
                 }
             }
         }
-        
         /**
          * @brief Check if body is properly supported by contacts opposing gravity
          * 
          * A body is considered properly supported if all active contacts have
          * normals that oppose the gravity direction (dot product < 0).
          */
-        bool IsBodyProperlySupported(const PhysicsBodyComponent& body) const
-        {
-            // For now, use the existing grounded state as a proxy
-            // In a full implementation, this would check actual contact normals
-            // against the gravity vector
+        bool IsBodyProperlySupported(const PhysicsBodyComponent& body) const {
             return body.IsStablyGrounded();
         }
     };
