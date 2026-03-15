@@ -4,6 +4,7 @@ on:
     branches:
       - Temporary  # Trigger whenever you push to main
 
+
 jobs:
   clean-and-sync:
     runs-on: ubuntu-latest
