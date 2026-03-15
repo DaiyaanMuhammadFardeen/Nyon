@@ -16,13 +16,16 @@ jobs:
 
       - name: Process Files
         run: |
-          # 1. Remove all C++ comments (single and multi-line)
-          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/\/\*.*?\*\/|\/\/.*/ /g' {} +
+          # 1. Remove Doxygen and multi-line blocks (/** ... */ and /* ... */)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/\/\*.*?\*\///gs' {} +
           
-          # 2. Move opening braces to the previous line
-          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/(\w+)\s*\n\s*\{/$1 {/g' {} +
+          # 2. Remove single-line comments (// ...)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -pi -e 's/\/\/.*/ /g' {} +
           
-          # 3. Remove all empty lines
+          # 3. Move opening braces to the previous line (Namespace/Class/Block)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/(\w+|:)\s*\n\s*\{/$1 {/g' {} +
+          
+          # 4. Remove all empty lines and trim trailing whitespace
           find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec sed -i '/^[[:space:]]*$/d' {} +
 
       - name: Push to Clean Branch
