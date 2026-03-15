@@ -325,8 +325,16 @@ namespace Nyon::ECS
                 case ShapeType::Capsule:
                 {
                     const auto& capsule = GetCapsule();
-                    Math::Vector2 center1 = capsule.center1 + position;
-                    Math::Vector2 center2 = capsule.center2 + position;
+                    
+                    // Apply rotation to capsule endpoints
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto rotate2D = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+                    
+                    Math::Vector2 center1 = rotate2D(capsule.center1) + position;
+                    Math::Vector2 center2 = rotate2D(capsule.center2) + position;
                     
                     Math::Vector2 min = {
                         std::min(center1.x, center2.x) - capsule.radius,
@@ -345,8 +353,16 @@ namespace Nyon::ECS
                 case ShapeType::Segment:
                 {
                     const auto& segment = GetSegment();
-                    Math::Vector2 p1 = segment.point1 + position;
-                    Math::Vector2 p2 = segment.point2 + position;
+                    
+                    // Apply rotation to segment endpoints
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto rotate2D = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+                    
+                    Math::Vector2 p1 = rotate2D(segment.point1) + position;
+                    Math::Vector2 p2 = rotate2D(segment.point2) + position;
                     
                     outMin = {
                         std::min(p1.x, p2.x) - segment.radius,

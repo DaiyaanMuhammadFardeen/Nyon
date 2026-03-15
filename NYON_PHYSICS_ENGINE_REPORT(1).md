@@ -2852,3 +2852,259 @@ float lambda = -vcp.normalMass * (vn + vcp.bias);
 
 *End of Report*
 
+
+The code is now quite close to a working 2D physics pipeline (inspired by Box2D-lite style), but several critical issues remain that explain why objects phase through floors/platforms despite contacts being detected:
+
+### Main remaining problems causing tunneling / phasing through
+
+1. **Position correction is applied too late**  
+   You call `IntegratePositions()` **before** `SolvePositionConstraints()`.  
+   → You first move bodies into deeper penetration, then try to push back. This is unstable and often insufficient (especially at 60 Hz).
+
+2. **Position solver uses stale contact data**  
+   You loop over `m_VelocityConstraints.points`, but those points have positions from the **previous** narrow-phase. After velocity solving + integration, bodies have moved → `point.position - body.position` is wrong → wrong `rA`, wrong correction direction/strength.
+
+3. **No dedicated `PositionConstraint` usage**  
+   You declared `PositionConstraint` and `m_PositionConstraints` but never fill or use them. The current `SolvePositionConstraints()` is using velocity-constraint data incorrectly.
+
+4. **Baumgarte is applied, but weakly / inconsistently**  
+   Typical stable values are β ≈ 0.1–0.25 (Box2D classic used ~0.2). Your `baumgarte = 0.2f` is reasonable, but because of point 1+2 it doesn't help enough.
+
+5. **No post-correction velocity update** (minor, but adds jitter)  
+   After position correction you don't zero out velocity component along normal (can cause sinking bounce-back).
+
+6. **Static bodies are included in solver bodies** — good, but ensure invMass=0, invInertia=0 is strictly enforced.
+
+7. **Warm-starting happens after velocity integration**  
+   You apply cached impulses **after** gravity/force integration — this is wrong. Warm-start should happen **before** new velocity integration (standard is: warm-start → solve velocity → integrate velocity → solve position → integrate position).
+
+### Recommended order (standard Box2D-like)
+
+```
+PrepareBodiesForUpdate()
+BroadPhase → NarrowPhase → IslandDetection
+ConstraintInitialization()   // fill velocity + position constraints, compute masses, restore impulses
+VelocitySolving():
+    WarmStartConstraints()
+    IntegrateVelocities(dt)
+    for velocityIterations: SolveVelocityConstraints()
+PositionSolving():
+    IntegratePositions(dt)
+    for positionIterations: SolvePositionConstraints()
+Integration()  // copy back to components
+StoreImpulses()
+UpdateSleeping()
+UpdateTransformsFromSolver()
+```
+
+### Fixed version of the file
+
+I only changed the problematic parts (mostly `VelocitySolving`, `PositionSolving`, `ConstraintInitialization`, order in `Update`).  
+I added filling of `m_PositionConstraints` and rewrote `SolvePositionConstraints` to use it.  
+I moved `IntegratePositions` **after** velocity solve but **before** position solve loop.
+
+```cpp
+// ... (includes and namespace unchanged)
+
+void PhysicsPipelineSystem::Update(float deltaTime)
+{
+    // ... (lazy init of m_PhysicsWorld and m_IslandManager unchanged)
+
+    if (!m_PhysicsWorld || !m_ComponentStore) return;
+
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    m_ActiveEntities.clear();
+    m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID eid, const PhysicsBodyComponent& b) {
+        if (!b.isStatic) m_ActiveEntities.push_back(eid);
+    });
+
+    PrepareBodiesForUpdate();
+    BroadPhaseDetection();
+    NarrowPhaseDetection();
+    IslandDetection();
+
+    // Critical: initialize BOTH velocity and position constraints here
+    ConstraintInitialization();
+
+    VelocitySolving();      // warm-start → integrate vel → solve vel
+    PositionSolving();      // integrate pos → solve pos (multiple times)
+
+    Integration();
+    StoreImpulses();
+    UpdateSleeping();
+    UpdateTransformsFromSolver();
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration<float, std::milli>(endTime - startTime);
+    m_Stats.updateTime = duration.count();
+}
+
+void PhysicsPipelineSystem::ConstraintInitialization()
+{
+    m_VelocityConstraints.clear();
+    m_PositionConstraints.clear();  // ← important, we will fill this now
+
+    for (const auto& manifold : m_ContactManifolds)
+    {
+        if (manifold.points.empty()) continue;
+
+        auto itA = m_EntityToSolverIndex.find(manifold.entityIdA);
+        auto itB = m_EntityToSolverIndex.find(manifold.entityIdB);
+        if (itA == m_EntityToSolverIndex.end() || itB == m_EntityToSolverIndex.end()) continue;
+
+        size_t idxA = itA->second;
+        size_t idxB = itB->second;
+
+        const auto& bodyA = m_SolverBodies[idxA];
+        const auto& bodyB = m_SolverBodies[idxB];
+
+        // --- Velocity constraint ---
+        VelocityConstraint vc;
+        vc.normal   = manifold.normal;
+        vc.tangent  = Math::Vector2{-vc.normal.y, vc.normal.x};
+        vc.indexA   = idxA;
+        vc.indexB   = idxB;
+        vc.invMassA = bodyA.invMass;
+        vc.invMassB = bodyB.invMass;
+        vc.invIA    = bodyA.invInertia;
+        vc.invIB    = bodyB.invInertia;
+
+        const auto& ca = m_ComponentStore->GetComponent<ColliderComponent>(manifold.entityIdA);
+        const auto& cb = m_ComponentStore->GetComponent<ColliderComponent>(manifold.entityIdB);
+        vc.friction    = std::sqrt(ca.material.friction * cb.material.friction);
+        vc.restitution = std::max(ca.material.restitution, cb.material.restitution);
+
+        vc.points = manifold.points;  // copy
+
+        // Precompute normal/tangent mass + velocity bias + restore impulses
+        for (auto& p : vc.points)
+        {
+            Math::Vector2 rA = p.position - bodyA.position;
+            Math::Vector2 rB = p.position - bodyB.position;
+
+            float crA_n = Math::Vector2::Cross(rA, vc.normal);
+            float crB_n = Math::Vector2::Cross(rB, vc.normal);
+            float kNormal = vc.invMassA + vc.invMassB + vc.invIA * crA_n*crA_n + vc.invIB * crB_n*crB_n;
+            p.normalMass = (kNormal > 1e-6f) ? 1.0f / kNormal : 0.0f;
+
+            float crA_t = Math::Vector2::Cross(rA, vc.tangent);
+            float crB_t = Math::Vector2::Cross(rB, vc.tangent);
+            float kTangent = vc.invMassA + vc.invMassB + vc.invIA * crA_t*crA_t + vc.invIB * crB_t*crB_t;
+            p.tangentMass = (kTangent > 1e-6f) ? 1.0f / kTangent : 0.0f;
+
+            // Relative normal velocity (at beginning of step)
+            Math::Vector2 dv = (bodyB.velocity + Math::Vector2::Cross(bodyB.angularVelocity, rB))
+                             - (bodyA.velocity + Math::Vector2::Cross(bodyA.angularVelocity, rA));
+            float vn = Math::Vector2::Dot(dv, vc.normal);
+
+            p.velocityBias = (vn < -m_PhysicsWorld->restitutionThreshold) ? -vc.restitution * vn : 0.0f;
+
+            // Warm-start from cache
+            uint64_t key = MakeImpulseCacheKey(manifold.entityIdA, manifold.entityIdB, p.featureId);
+            auto cit = m_ImpulseCache.find(key);
+            if (cit != m_ImpulseCache.end())
+            {
+                p.normalImpulse  = cit->second.normalImpulse;
+                p.tangentImpulse = cit->second.tangentImpulse;
+            }
+            else
+            {
+                p.normalImpulse = p.tangentImpulse = 0.0f;
+            }
+        }
+
+        m_VelocityConstraints.push_back(std::move(vc));
+
+        // --- Position constraint (one per manifold, not per point — simpler & sufficient) ---
+        PositionConstraint pc;
+        pc.indexA = idxA;
+        pc.indexB = idxB;
+        pc.invMassA = bodyA.invMass;  pc.invMassB = bodyB.invMass;
+        pc.invIA = bodyA.invInertia;  pc.invIB = bodyB.invInertia;
+        pc.localNormal = manifold.localNormal;   // assume you store this in manifold
+        pc.localPoint  = manifold.localPoint;    // reference point (e.g. deepest or average)
+
+        // For simple correction we only need min separation (or use per-point if you want)
+        pc.minSeparation = -std::numeric_limits<float>::infinity();
+        for (const auto& p : manifold.points)
+            if (p.separation < pc.minSeparation) pc.minSeparation = p.separation;
+
+        m_PositionConstraints.push_back(std::move(pc));
+    }
+
+    m_Stats.activeConstraints = m_VelocityConstraints.size();
+}
+
+void PhysicsPipelineSystem::VelocitySolving()
+{
+    // Warm-start BEFORE integrating new forces/velocities
+    if (m_Config.warmStarting) WarmStartConstraints();
+
+    // Apply gravity + user forces
+    for (auto& b : m_SolverBodies)
+    {
+        if (b.isStatic || !b.isAwake) continue;
+        float mass = b.invMass > 0 ? 1.0f / b.invMass : 0.0f;
+        b.force += m_PhysicsWorld->gravity * mass;
+    }
+
+    IntegrateVelocities(FIXED_TIMESTEP);
+
+    for (int i = 0; i < m_Config.velocityIterations; ++i)
+        SolveVelocityConstraints();
+}
+
+void PhysicsPipelineSystem::PositionSolving()
+{
+    IntegratePositions(FIXED_TIMESTEP);
+
+    for (int i = 0; i < m_Config.positionIterations; ++i)
+        SolvePositionConstraints();
+}
+
+void PhysicsPipelineSystem::SolvePositionConstraints()
+{
+    for (auto& pc : m_PositionConstraints)
+    {
+        auto& bodyA = m_SolverBodies[pc.indexA];
+        auto& bodyB = m_SolverBodies[pc.indexB];
+
+        // Simple single-point / min-separation correction (good enough for most games)
+        if (pc.minSeparation > -m_Config.linearSlop) continue;
+
+        float C = m_Config.baumgarte * (pc.minSeparation + m_Config.linearSlop);
+        C = std::min(C, m_Config.maxLinearCorrection);  // avoid explosion
+
+        float mass = pc.invMassA + pc.invMassB
+                   + pc.invIA * /* some rotational term if you want */ 0.0f
+                   + pc.invIB * 0.0f;
+
+        if (mass < 1e-6f) continue;
+        mass = 1.0f / mass;
+
+        Math::Vector2 correction = pc.localNormal * (C * mass);  // direction from A to B
+
+        if (!bodyA.isStatic)
+            bodyA.position -= correction * pc.invMassA;
+
+        if (!bodyB.isStatic)
+            bodyB.position += correction * pc.invMassB;
+    }
+}
+
+// The rest of the file (PrepareBodiesForUpdate, BroadPhase, NarrowPhase, WarmStart,
+// SolveVelocityConstraints, Integrate*, StoreImpulses, UpdateSleeping, etc.) can stay
+// mostly as-is — they look reasonable now that order & masses are fixed.
+```
+
+### Quick tuning recommendations
+
+- In `Config`: keep `baumgarte = 0.2f`, `linearSlop = 0.01f` to `0.005f`, `maxLinearCorrection = 0.2f`
+- `velocityIterations = 8–10`, `positionIterations = 3–5` (start low, increase if jittery)
+- Make sure static floor has `invMass = invInertia = 0.0f` (enforced in `PrepareBodiesForUpdate` when `isStatic=true`)
+
+Rebuild, drop a box on a static platform, and watch the logs / debug draw.  
+If still tunneling → increase position iterations to 5–8 or lower `linearSlop` a bit.
+
+Let me know what behavior you see after this change (sinking, bouncing too much, stable but soft, etc.) — we can fine-tune from there. Good luck!

@@ -37,8 +37,8 @@ namespace Nyon::ECS
             int velocityIterations = 8;      // Number of velocity constraint iterations
             int positionIterations = 3;      // Number of position constraint iterations
             float baumgarte = 0.2f;          // Baumgarte stabilization factor
-            float linearSlop = 0.005f;       // Linear slop for position correction
-            float maxLinearCorrection = 0.2f; // Maximum linear position correction
+            float linearSlop = 0.5f;         // Linear slop for position correction (half a pixel for pixel-unit worlds)
+            float maxLinearCorrection = 20.0f; // Maximum linear position correction (increased from 0.2 to handle pixel-scale penetrations up to ~20px per frame)
             bool warmStarting = true;        // Enable warm starting of constraints
             bool useIslandSleeping = true;   // Enable island-based sleeping optimization
         };

@@ -3,6 +3,14 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <iostream>
+
+// Collision detection debug logging (only when needed)
+#ifdef _DEBUG
+#define COLLISION_DEBUG_LOG(x) std::cerr << "[COLLISION] " << x << std::endl
+#else
+#define COLLISION_DEBUG_LOG(x)
+#endif
 
 using namespace Nyon::ECS;
 
@@ -30,10 +38,9 @@ namespace Nyon::Physics
         inline Math::Vector2 Normalize(const Math::Vector2& v)
         {
             float lenSq = v.LengthSquared();
-            if (lenSq < 1e-8f)
-                return {0.0f, 0.0f};
-            float invLen = 1.0f / std::sqrt(lenSq);
-            return {v.x * invLen, v.y * invLen};
+            if (lenSq < 1e-8f) return {1.0f, 0.0f};
+            float inv = 1.0f / std::sqrt(lenSq);
+            return {v.x * inv, v.y * inv};
         }
 
         inline void ComputeCircleCenters(const ColliderComponent::CircleShape& circle,
@@ -84,8 +91,7 @@ namespace Nyon::Physics
         }
         
         // Find incident face on polygon that is most anti-parallel to reference normal
-        inline int FindIncidentFace(const std::vector<Math::Vector2>& vertices,
-                                   const std::vector<Math::Vector2>& normals,
+        inline int FindIncidentFace(const std::vector<Math::Vector2>& normals,
                                    const Math::Vector2& referenceNormal)
         {
             int incidentFace = 0;
@@ -105,84 +111,91 @@ namespace Nyon::Physics
         }
         
         // Clip segment to line using Sutherland-Hodgman algorithm
-        inline void ClipSegmentToLine(std::vector<ECS::ContactPoint>& vOut,
-                                     const std::vector<Math::Vector2>& refVerts,
-                                     const std::vector<Math::Vector2>& incVerts,
-                                     int refFaceIndex,
-                                     int incFaceIndex,
-                                     const Math::Vector2& normal,
-                                     float separation)
+        inline void ClipSegmentToLine(std::vector<ECS::ContactPoint>& outContacts,
+                                      const std::vector<Math::Vector2>& refVerts,
+                                      const std::vector<Math::Vector2>& incVerts,
+                                      int refFaceIndex,
+                                      int incFaceIndex,
+                                      const Math::Vector2& normal,
+                                      float /*separation*/)
         {
-            // Get reference face vertices
-            size_t n = refVerts.size();
+            COLLISION_DEBUG_LOG("    [Clip] Ref face " << refFaceIndex << " | Inc face " << incFaceIndex);
+
+            size_t nRef = refVerts.size();
             Math::Vector2 v1 = refVerts[refFaceIndex];
-            Math::Vector2 v2 = refVerts[(refFaceIndex + 1) % n];
-            
-            // Get incident face vertices
-            n = incVerts.size();
+            Math::Vector2 v2 = refVerts[(refFaceIndex + 1) % nRef];
+
+            size_t nInc = incVerts.size();
             Math::Vector2 iv1 = incVerts[incFaceIndex];
-            Math::Vector2 iv2 = incVerts[(incFaceIndex + 1) % n];
-            
-            // Clip incident edge against reference face side planes
-            std::vector<Math::Vector2> clipPoints;
-            
-            // Side 1
-            Math::Vector2 sideNormal = v2 - v1;
-            sideNormal = {-sideNormal.y, sideNormal.x}; // Perpendicular
-            float sideOffset = Dot(sideNormal, v1);
-            
-            float d1 = Dot(sideNormal, iv1) - sideOffset;
-            float d2 = Dot(sideNormal, iv2) - sideOffset;
-            
-            if (d1 <= 0.0f) clipPoints.push_back(iv1);
+            Math::Vector2 iv2 = incVerts[(incFaceIndex + 1) % nInc];
+
+            // --- Side 1 clip (perpendicular to reference edge) ---
+            Math::Vector2 side1 = v2 - v1;
+            side1 = {-side1.y, side1.x};               // inward perpendicular
+            float offset1 = Dot(side1, v1);
+
+            float d1 = Dot(side1, iv1) - offset1;
+            float d2 = Dot(side1, iv2) - offset1;
+
+            std::vector<Math::Vector2> clip;
+            if (d1 <= 0.0f) clip.push_back(iv1);
             if (d1 * d2 < 0.0f && std::abs(d2 - d1) > 1e-6f)
             {
                 float t = d1 / (d1 - d2);
-                clipPoints.push_back(iv1 + (iv2 - iv1) * t);
+                clip.push_back(iv1 + (iv2 - iv1) * t);
             }
-            
-            // Side 2
-            if (!clipPoints.empty())
+            if (d2 <= 0.0f) clip.push_back(iv2);
+
+            // --- Side 2 clip (opposite side of reference edge) ---
+            if (clip.empty())
             {
-                std::vector<Math::Vector2> clipPoints2;
-                Math::Vector2 sideNormal2 = v1 - v2;
-                sideNormal2 = {-sideNormal2.y, sideNormal2.x};
-                float sideOffset2 = Dot(sideNormal2, v2);
-                
-                for (size_t i = 0; i < clipPoints.size(); ++i)
-                {
-                    float d = Dot(sideNormal2, clipPoints[i]) - sideOffset2;
-                    if (d <= 0.0f)
-                    {
-                        clipPoints2.push_back(clipPoints[i]);
-                    }
-                    else if (i > 0)
-                    {
-                        float prevD = Dot(sideNormal2, clipPoints[i-1]) - sideOffset2;
-                        if (prevD * d < 0.0f && std::abs(d - prevD) > 1e-6f)
-                        {
-                            float t = prevD / (prevD - d);
-                            clipPoints2.push_back(clipPoints[i-1] + (clipPoints[i] - clipPoints[i-1]) * t);
-                        }
-                    }
-                }
-                clipPoints = clipPoints2;
+                COLLISION_DEBUG_LOG("      Clipped away by side planes");
+                return;
             }
-            
-            // Clip against reference face plane
+
+            std::vector<Math::Vector2> finalClip;
+            Math::Vector2 side2 = v1 - v2;
+            side2 = {-side2.y, side2.x};
+            float offset2 = Dot(side2, v2);
+
+            if (clip.size() == 1)
+            {
+                float d = Dot(side2, clip[0]) - offset2;
+                if (d <= 0.0f) finalClip.push_back(clip[0]);
+            }
+            else // 2 points = clipped edge
+            {
+                float dA = Dot(side2, clip[0]) - offset2;
+                float dB = Dot(side2, clip[1]) - offset2;
+
+                if (dA <= 0.0f) finalClip.push_back(clip[0]);
+                if (dA * dB < 0.0f && std::abs(dB - dA) > 1e-6f)
+                {
+                    float t = dA / (dA - dB);
+                    finalClip.push_back(clip[0] + (clip[1] - clip[0]) * t);
+                }
+                if (dB <= 0.0f) finalClip.push_back(clip[1]);
+            }
+
+            // --- Final clip against reference face plane ---
             float refOffset = Dot(normal, v1);
-            for (const auto& pt : clipPoints)
+            for (const auto& pt : finalClip)
             {
                 float sep = Dot(normal, pt) - refOffset;
-                if (sep <= 0.0f)  // Fixed: was sep <= separation (minOverlap), which accepts points in front of the face
+                if (sep <= 0.0f)                     // penetration or touching
                 {
                     ECS::ContactPoint cp{};
-                    cp.position = pt;
-                    cp.normal = normal;
-                    cp.separation = sep;
+                    cp.position     = pt;
+                    cp.normal       = normal;
+                    cp.separation   = sep;
                     cp.normalImpulse = 0.0f;
                     cp.tangentImpulse = 0.0f;
-                    vOut.push_back(cp);
+                    cp.normalMass   = 0.0f;
+                    cp.tangentMass  = 0.0f;
+                    cp.persisted    = false;
+                    outContacts.push_back(cp);
+
+                    COLLISION_DEBUG_LOG("        Contact @ (" << pt.x << "," << pt.y << ") sep=" << sep);
                 }
             }
         }
@@ -203,6 +216,8 @@ namespace Nyon::Physics
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
         manifold.touching = false;
+
+        COLLISION_DEBUG_LOG("GenerateManifold: entityA=" << entityIdA << " entityB=" << entityIdB);
 
         using ST = ColliderComponent::ShapeType;
         ST tA = colliderA.GetType();
@@ -233,6 +248,7 @@ namespace Nyon::Physics
         // Dispatch to appropriate collision function based on shape type pair
         if (tA == ST::Circle && tB == ST::Circle)
         {
+            COLLISION_DEBUG_LOG("  -> Circle-Circle collision");
             return CircleCircle(entityIdA, entityIdB, shapeIdA, shapeIdB,
                                colliderA.GetCircle(), colliderB.GetCircle(),
                                transformA, transformB, manifold);
@@ -240,6 +256,7 @@ namespace Nyon::Physics
         
         if (tA == ST::Circle && tB == ST::Polygon)
         {
+            COLLISION_DEBUG_LOG("  -> Circle-Polygon collision");
             if (swapped)
             {
                 return CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
@@ -256,6 +273,7 @@ namespace Nyon::Physics
         
         if (tA == ST::Polygon && tB == ST::Polygon)
         {
+            COLLISION_DEBUG_LOG("  -> Polygon-Polygon collision");
             return PolygonPolygon(entityIdA, entityIdB, shapeIdA, shapeIdB,
                                  colliderA.GetPolygon(), colliderB.GetPolygon(),
                                  transformA, transformB, manifold);
@@ -441,6 +459,8 @@ namespace Nyon::Physics
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
         
+        COLLISION_DEBUG_LOG("  [PolygonPolygon] Testing collision");
+        
         // Get world-space vertices and normals for both polygons
         std::vector<Math::Vector2> vertsA, normalsA;
         std::vector<Math::Vector2> vertsB, normalsB;
@@ -485,26 +505,29 @@ namespace Nyon::Physics
             {
                 minOverlap = overlap;
                 separatingAxis = axis;
-                referenceFace = static_cast<int>(i) + static_cast<int>(vertsA.size());
+                referenceFace = static_cast<int>(i) + static_cast<int>(normalsA.size());  // Fixed: use normalsA.size() instead of vertsA.size()
             }
         }
         
         // Collision detected - generate contact manifold
+        COLLISION_DEBUG_LOG("  [PolygonPolygon] Collision detected! Min overlap=" << minOverlap);
         manifold.normal = separatingAxis;
         manifold.points.clear();
         
         // Find incident face on polygon B relative to reference face on A
-        if (referenceFace < static_cast<int>(vertsA.size()))
+        if (referenceFace < static_cast<int>(normalsA.size()))  // Fixed: use normalsA.size() for correct bounds check
         {
             // Reference face is on polygon A, find incident face on B
-            int incidentFace = FindIncidentFace(vertsB, normalsB, -separatingAxis);
+            int incidentFace = FindIncidentFace(normalsB, -separatingAxis);
+            COLLISION_DEBUG_LOG("    Reference face on A (index=" << referenceFace << "), incident face on B (index=" << incidentFace << ")");
             ClipSegmentToLine(manifold.points, vertsA, vertsB, referenceFace, incidentFace, separatingAxis, minOverlap);
         }
         else
         {
             // Reference face is on polygon B, find incident face on A
-            int incidentFace = FindIncidentFace(vertsA, normalsA, -separatingAxis);  // Fixed: was +separatingAxis
-            int refFace = referenceFace - static_cast<int>(vertsA.size());
+            int incidentFace = FindIncidentFace(normalsA, -separatingAxis);  // Fixed: was +separatingAxis
+            int refFace = referenceFace - static_cast<int>(normalsA.size());  // Fixed: use normalsA.size() for correct decode
+            COLLISION_DEBUG_LOG("    Reference face on B (index=" << refFace << "), incident face on A (index=" << incidentFace << ")");
             ClipSegmentToLine(manifold.points, vertsB, vertsA, refFace, incidentFace, -separatingAxis, minOverlap);
             // Flip normal direction
             manifold.normal = -separatingAxis;
@@ -515,9 +538,11 @@ namespace Nyon::Physics
         Math::Vector2 d = transformB.position - transformA.position;
         if (Math::Vector2::Dot(d, manifold.normal) < 0.0f) {
             manifold.normal = -manifold.normal;
-            // Also flip each contact point's normal to match
+            // Also flip each contact point's normal and separation to match
+            // the new normal direction (separation is defined along the normal).
             for (auto& cp : manifold.points) {
                 cp.normal = -cp.normal;
+                cp.separation = -cp.separation;
             }
         }
         
@@ -527,6 +552,32 @@ namespace Nyon::Physics
             Math::Vector2 invRotA = Rotate(manifold.normal, -transformA.rotation);
             manifold.localNormal = invRotA;
             manifold.localPoint = Rotate(manifold.points[0].position - transformA.position, -transformA.rotation);
+            manifold.touching = true;
+            
+            COLLISION_DEBUG_LOG("  [PolygonPolygon] Generated " << manifold.points.size() << " contact point(s):");
+            for (size_t i = 0; i < manifold.points.size(); ++i) {
+                const auto& pt = manifold.points[i];
+                COLLISION_DEBUG_LOG("    Contact[" << i << "] pos=(" << pt.position.x << "," << pt.position.y 
+                                  << ") sep=" << pt.separation << " normalImpulse=" << pt.normalImpulse);
+            }
+        }
+        else
+        {
+            COLLISION_DEBUG_LOG("  [PolygonPolygon] No contact points generated (clipping failed). Using fallback contact.");
+
+            // Fallback: generate a single contact point at the midpoint between bodies.
+            // This ensures the solver has something to resolve even if clipping fails.
+            ECS::ContactPoint cp{};
+            cp.position = (transformA.position + transformB.position) * 0.5f;
+            cp.normal = manifold.normal;
+            cp.separation = -minOverlap;
+            cp.normalImpulse = 0.0f;
+            cp.tangentImpulse = 0.0f;
+            cp.normalMass = 0.0f;
+            cp.tangentMass = 0.0f;
+            cp.featureId = 0;
+            cp.persisted = false;
+            manifold.points.push_back(cp);
             manifold.touching = true;
         }
         
