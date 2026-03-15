@@ -1,0 +1,40 @@
+name: Strip Comments and Sync
+on:
+  push:
+    branches:
+      - Temporary  # Trigger whenever you push to main
+
+jobs:
+  clean-and-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Comment Remover
+        run: |
+          # Example using 'uncomment' via cargo
+          cargo install uncomment-cli
+
+      - name: Process Files
+        run: |
+          # 1. Remove all C++ comments (single and multi-line)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/\/\*.*?\*\/|\/\/.*/ /g' {} +
+          
+          # 2. Move opening braces to the previous line
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/(\w+)\s*\n\s*\{/$1 {/g' {} +
+          
+          # 3. Remove all empty lines
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec sed -i '/^[[:space:]]*$/d' {} +
+
+      - name: Push to Clean Branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -B Temporary
+          git add .
+          git commit -m "Auto-strip comments from main" || echo "No changes to commit"
+          git push origin clean-branch --force
