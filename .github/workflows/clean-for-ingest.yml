@@ -33,7 +33,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          git checkout -B Temporary
+          git checkout -B Clean
           git add .
           git commit -m "Auto-strip comments from main" || echo "No changes to commit"
-          git push origin Temporary --force
+          git push origin Clean --force
