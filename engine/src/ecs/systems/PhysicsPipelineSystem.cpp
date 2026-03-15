@@ -9,12 +9,12 @@ namespace Nyon::ECS
     {
         m_ComponentStore = &componentStore;
 
-        // Find physics world component
+        // Find physics world component and store its entity ID
         m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
-                m_PhysicsWorld = &world;
+                m_PhysicsWorldEntity = entityId;
                 });
 
-        if (!m_PhysicsWorld)
+        if (m_PhysicsWorldEntity == INVALID_ENTITY)
         {
             return;
         }
@@ -26,20 +26,20 @@ namespace Nyon::ECS
     void PhysicsPipelineSystem::Update(float deltaTime)
     {
         // Lazy initialization - find PhysicsWorldComponent if not already found
-        if (!m_PhysicsWorld && m_ComponentStore)
+        if (m_PhysicsWorldEntity == INVALID_ENTITY && m_ComponentStore)
         {
             m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
-                    m_PhysicsWorld = &world;
+                    m_PhysicsWorldEntity = entityId;
 
                     // Initialize island manager now that we have a physics world
                     if (!m_IslandManager)
                     {
-                    m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
+                        m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
                     }
                     });
         }
 
-        if (!m_PhysicsWorld || !m_ComponentStore)
+        if (m_PhysicsWorldEntity == INVALID_ENTITY || !m_ComponentStore)
         {
             return;
         }
@@ -241,8 +241,9 @@ namespace Nyon::ECS
         m_ContactMap.clear();
 
         // Clear world contacts for this frame
-        if (m_PhysicsWorld) {
-            m_PhysicsWorld->contactManifolds.clear();
+        if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
+            auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+            world.contactManifolds.clear();
         }
 
 
@@ -261,7 +262,8 @@ namespace Nyon::ECS
                     m_ContactManifolds.push_back(std::move(manifold));
 
                     // Also populate the world component for island manager and debug rendering
-                    if (m_PhysicsWorld) {
+                    if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
+                        auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
                         ECS::ContactManifold worldManifold;
                         worldManifold.entityIdA = manifold.entityIdA;
                         worldManifold.entityIdB = manifold.entityIdB;
@@ -278,7 +280,7 @@ namespace Nyon::ECS
                             worldManifold.points.push_back(std::move(cp));
                         }
 
-                        m_PhysicsWorld->contactManifolds.push_back(std::move(worldManifold));
+                        world.contactManifolds.push_back(std::move(worldManifold));
                     }
                 }
             }
@@ -375,7 +377,13 @@ namespace Nyon::ECS
                     float vRel = Math::Vector2::Dot(relVel, vc.normal);
 
                     // Use world restitution threshold instead of hardcoded value
-                    if (vRel < -m_PhysicsWorld->restitutionThreshold)
+                    float restitutionThreshold = 0.0f;
+                    if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
+                    {
+                        restitutionThreshold = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity).restitutionThreshold;
+                    }
+
+                    if (vRel < -restitutionThreshold)
                     {
                         point.velocityBias = -vc.restitution * vRel;
                     }
@@ -406,11 +414,12 @@ namespace Nyon::ECS
         // 1. Apply gravity and other external forces
         for (auto& body : m_SolverBodies)
         {
-            if (!body.isStatic && body.isAwake && m_PhysicsWorld)
+            if (!body.isStatic && body.isAwake && m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
             {
                 // Apply gravity as force: F = m * g
                 float mass = (body.invMass > 0.0f) ? 1.0f / body.invMass : 0.0f;
-                body.force += m_PhysicsWorld->gravity * mass;
+                const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+                body.force += world.gravity * mass;
             }
         }
         

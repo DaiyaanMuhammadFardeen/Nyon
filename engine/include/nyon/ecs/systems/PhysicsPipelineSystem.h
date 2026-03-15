@@ -163,7 +163,7 @@ namespace Nyon::ECS
         
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
-        PhysicsWorldComponent* m_PhysicsWorld = nullptr;
+        EntityID m_PhysicsWorldEntity = INVALID_ENTITY;
         
         // Pipeline data
         Config m_Config;

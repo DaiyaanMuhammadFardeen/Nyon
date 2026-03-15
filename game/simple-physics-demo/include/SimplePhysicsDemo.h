@@ -49,7 +49,7 @@ private:
     float m_SimTime            { 0.0f  };
 
     // How long the demo runs before closing automatically.
-    static constexpr float DEMO_DURATION_S { 6.0f };
+    static constexpr float DEMO_DURATION_S { 60.0f };
 
     // Print box position to stderr every N seconds of sim time.
     static constexpr float LOG_INTERVAL_S  { 0.5f  };

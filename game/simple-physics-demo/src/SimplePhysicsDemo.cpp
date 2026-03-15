@@ -227,7 +227,7 @@ void SimplePhysicsDemo::CreatePlatform()
 
     ECS::ColliderComponent platformCollider(platformShape);
     platformCollider.material.friction    = 0.6f;
-    platformCollider.material.restitution = 0.1f;
+    platformCollider.material.restitution = 0.9f;
     platformCollider.material.density     = 0.0f;  // irrelevant for static body
 
     // ── render component ─────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ void SimplePhysicsDemo::CreateFallingBox()
 
     ECS::ColliderComponent boxCollider(boxShape);
     boxCollider.material.friction    = 0.4f;
-    boxCollider.material.restitution = 0.2f;
+    boxCollider.material.restitution = 0.5f;
     boxCollider.material.density     = 0.0008f; // mass / area = 2 / 2500
 
     // ── physics body ─────────────────────────────────────────────────────────

@@ -64,18 +64,19 @@ namespace Nyon::ECS
     
     void DebugRenderSystem::Update(float deltaTime)
     {
-        // Lazily resolve the physics world pointer each update in case it was
-        // created after this system was initialized (e.g. in OnECSStart).
-        if (!m_PhysicsWorld && m_ComponentStore)
+        // Lazily find the physics world entity each update in case it is created
+        // after this system is initialized (e.g. in OnECSStart).
+        if (m_PhysicsWorldEntity == INVALID_ENTITY && m_ComponentStore)
         {
             const auto& worldEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsWorldComponent>();
             if (!worldEntities.empty())
             {
-                m_PhysicsWorld = &m_ComponentStore->GetComponent<PhysicsWorldComponent>(worldEntities[0]);
+                m_PhysicsWorldEntity = worldEntities[0];
             }
         }
 
-        if (!m_PhysicsWorld)
+        // If we don't have a world entity yet, nothing to draw
+        if (m_PhysicsWorldEntity == INVALID_ENTITY)
             return;
             
         // Clear previous debug commands
@@ -241,18 +242,24 @@ namespace Nyon::ECS
     
     void DebugRenderSystem::DrawContacts()
     {
-        if (!m_PhysicsWorld) return;
-        
+        if (!m_ComponentStore || m_PhysicsWorldEntity == INVALID_ENTITY)
+            return;
+
+        if (!m_ComponentStore->HasComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity))
+            return;
+
+        const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+
         // Draw contact points and normals from physics world
-        for (const auto& manifold : m_PhysicsWorld->contactManifolds)
+        for (const auto& manifold : world.contactManifolds)
         {
             if (!manifold.touching) continue;
-            
+
             for (const auto& cp : manifold.points)
             {
                 // Draw contact point as small red circle
                 QueueCircle(cp.position, 3.0f, {1.f, 0.f, 0.f});
-                
+
                 // Draw contact normal as green line
                 Math::Vector2 normalEnd = cp.position + manifold.normal * 10.0f;
                 QueueLine(cp.position, normalEnd, {0.f, 1.f, 0.f});

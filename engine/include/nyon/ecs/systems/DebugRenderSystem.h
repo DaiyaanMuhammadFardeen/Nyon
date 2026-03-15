@@ -92,8 +92,8 @@ namespace Nyon::ECS
         
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
-        PhysicsWorldComponent* m_PhysicsWorld;
-        // Removed m_Entities cache to prevent stale pointers - query fresh each Update() call
+        EntityID m_PhysicsWorldEntity = INVALID_ENTITY;
+        // Removed m_PhysicsWorld pointer cache to avoid stale pointers when component storage resizes
         
         // Debug renderer implementation
         NyonDebugRenderer m_Renderer;
