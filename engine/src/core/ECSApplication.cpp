@@ -45,7 +45,10 @@ namespace Nyon
         m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
         m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
         // RenderSystem is NOT added to SystemManager - it's called separately during interpolation
-        m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
+        if (m_EnableDebugRenderer)
+        {
+            m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
+        }
         
         // Initialize RenderSystem separately - only called during OnInterpolateAndRender
         m_RenderSystem = std::make_unique<ECS::RenderSystem>();
@@ -54,7 +57,7 @@ namespace Nyon
         m_ECSInitialized = true;
         
         // Cache DebugRenderSystem pointer to avoid dynamic_cast every frame
-        m_DebugRenderSystem = m_SystemManager.GetSystem<ECS::DebugRenderSystem>();
+        m_DebugRenderSystem = m_EnableDebugRenderer ? m_SystemManager.GetSystem<ECS::DebugRenderSystem>() : nullptr;
         
         NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnStart() completed");
     }

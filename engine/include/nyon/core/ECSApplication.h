@@ -41,6 +41,9 @@ namespace Nyon
         virtual void OnECSUpdate(float deltaTime) {}  // Called after ECS systems update (user logic hook)
         virtual void OnECSFixedUpdate(float deltaTime) {}  // Called during fixed-step update (physics logic hook)
         
+        // Flag to enable/disable debug renderer (can be set by derived classes)
+        bool m_EnableDebugRenderer = true;
+        
         // Override base Application methods
         void OnStart() override final;
         void OnFixedUpdate(float deltaTime) override final;

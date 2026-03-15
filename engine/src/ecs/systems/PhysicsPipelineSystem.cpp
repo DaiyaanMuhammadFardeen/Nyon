@@ -2,6 +2,7 @@
 #include "nyon/physics/ManifoldGenerator.h"
 #include <chrono>
 #include <algorithm>
+#include <iostream>
 
 namespace Nyon::ECS
 {
@@ -99,13 +100,20 @@ namespace Nyon::ECS
                 }
                 else
                 {
-                // For dynamic bodies, check both island manager and component's own awake state
-                // This ensures newly created bodies (not yet in island manager) are still processed
-                bool islandAwake = m_IslandManager->IsBodyAwake(entityId);
-                bool componentAwake = body.isAwake;
+                // For dynamic bodies, check both island manager and component's own awake state.
+                // Bodies that explicitly disallow sleeping should always be processed.
+                if (!body.allowSleep)
+                {
+                    shouldInclude = true;
+                }
+                else
+                {
+                    bool islandAwake = m_IslandManager->IsBodyAwake(entityId);
+                    bool componentAwake = body.isAwake;
 
-                // Include if either says awake (treat unknown bodies as awake)
-                shouldInclude = islandAwake || componentAwake;
+                    // Include if either says awake (treat unknown bodies as awake)
+                    shouldInclude = islandAwake || componentAwake;
+                }
                 }
 
                 if (!shouldInclude)
@@ -168,6 +176,15 @@ namespace Nyon::ECS
                 // Initialize forces from ECS component (user-applied forces, gravity, etc.)
                 solverBody.force = body.force;
                 solverBody.torque = body.torque;
+
+                // Enforce motion locks early in the solver so collisions do not cause unwanted rotation.
+                // This keeps the body stable when lockRotation is enabled (e.g., player character).
+                if (body.motionLocks.lockRotation)
+                {
+                    solverBody.angularVelocity = 0.0f;
+                    solverBody.torque = 0.0f;
+                    solverBody.invInertia = 0.0f;
+                }
 
                 // Clear ECS-side forces so they don't accumulate across frames
                 body.ClearForces();
@@ -233,6 +250,12 @@ namespace Nyon::ECS
         }
 
         m_Stats.broadPhasePairs = m_BroadPhasePairs.size();
+        
+#ifdef _DEBUG
+        if (!m_BroadPhasePairs.empty()) {
+            std::cerr << "[PHYSICS] Broad phase found " << m_BroadPhasePairs.size() << " potential collision pairs\n";
+        }
+#endif
     }
 
     void PhysicsPipelineSystem::NarrowPhaseDetection()
@@ -255,6 +278,12 @@ namespace Nyon::ECS
                 ContactManifold manifold = GenerateManifold(entityIdA, entityIdB);
                 if (!manifold.points.empty())
                 {
+#ifdef _DEBUG
+                    std::cerr << "[PHYSICS] Collision detected between entities " 
+                              << entityIdA << " and " << entityIdB 
+                              << " with " << manifold.points.size() << " contact points\n";
+#endif
+
                     // Store contact for constraint solving
                     uint64_t key = (static_cast<uint64_t>(std::min(entityIdA, entityIdB)) << 32) |
                         static_cast<uint64_t>(std::max(entityIdA, entityIdB));
@@ -282,6 +311,13 @@ namespace Nyon::ECS
 
                         world.contactManifolds.push_back(std::move(worldManifold));
                     }
+                }
+                else
+                {
+#ifdef _DEBUG
+                    std::cerr << "[PHYSICS] Collision detected but manifold generation failed for entities " 
+                              << entityIdA << " and " << entityIdB << "\n";
+#endif
                 }
             }
         }
@@ -539,10 +575,19 @@ namespace Nyon::ECS
 
         // Update body sleeping states based on island manager
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, PhysicsBodyComponent& body) {
-                if (!body.isStatic)
+                if (body.isStatic)
+                    return;
+
+                // Bodies that explicitly disallow sleeping should always remain awake.
+                if (!body.allowSleep)
                 {
-                body.isAwake = m_IslandManager->IsBodyAwake(entityId);
+                    body.SetAwake(true);
+                    if (m_IslandManager)
+                        m_IslandManager->WakeIslandContaining(entityId);
+                    return;
                 }
+
+                body.isAwake = m_IslandManager->IsBodyAwake(entityId);
                 });
 
         m_Stats.awakeBodies = m_Stats.islandStats.awakeBodies;
@@ -916,6 +961,16 @@ namespace Nyon::ECS
 
     void PhysicsPipelineSystem::IntegrateVelocities(float dt)
     {
+        // Respect global/world speed limits if available
+        float maxLinearSpeed = std::numeric_limits<float>::infinity();
+        float maxAngularSpeed = std::numeric_limits<float>::infinity();
+        if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
+        {
+            const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+            maxLinearSpeed = world.maxLinearSpeed;
+            maxAngularSpeed = world.maxAngularSpeed;
+        }
+
         for (auto& body : m_SolverBodies)
         {
             if (body.isStatic || !body.isAwake)
@@ -924,8 +979,18 @@ namespace Nyon::ECS
             // Integrate linear velocity
             body.velocity += (body.force * body.invMass) * dt;
 
+            // Clamp velocity to prevent excessive tunneling
+            float speed = body.velocity.Length();
+            if (speed > maxLinearSpeed && speed > 0.0f)
+            {
+                body.velocity = body.velocity * (maxLinearSpeed / speed);
+            }
+
             // Integrate angular velocity
             body.angularVelocity += (body.torque * body.invInertia) * dt;
+
+            // Clamp angular velocity
+            body.angularVelocity = std::clamp(body.angularVelocity, -maxAngularSpeed, maxAngularSpeed);
 
             // Clear forces for next step
             body.force = Math::Vector2{0.0f, 0.0f};
