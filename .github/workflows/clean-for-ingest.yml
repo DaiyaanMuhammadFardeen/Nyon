@@ -13,11 +13,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Comment Remover
-        run: |
-          # Example using 'uncomment' via cargo
-          cargo install uncomment-cli
-
       - name: Process Files
         run: |
           # 1. Remove all C++ comments (single and multi-line)
