@@ -376,6 +376,13 @@ namespace Nyon::Physics
         Math::Vector2 polyNormal = normals[bestIndex];
         Math::Vector2 normal = {-polyNormal.x, -polyNormal.y};
         
+        // If flipNormal is true, the entities were swapped during dispatch.
+        // We need to flip the normal back to match the original entity ordering.
+        if (flipNormal)
+        {
+            normal = -normal;
+        }
+        
         float penetration = circle.radius - maxSeparation;
         
         // Contact point is the circle center projected back towards the polygon
@@ -401,6 +408,16 @@ namespace Nyon::Physics
         manifold.localNormal = invRotA;
         Math::Vector2 localContact = Rotate(contactPoint - circleTransform.position, -circleTransform.rotation);
         manifold.localPoint = localContact;
+        
+        // If flipNormal is true, we also need to flip local normal and contact point normals
+        if (flipNormal)
+        {
+            manifold.localNormal = -manifold.localNormal;
+            for (auto& cp : manifold.points)
+            {
+                cp.normal = -cp.normal;
+            }
+        }
         
         manifold.touching = true;
 
@@ -607,27 +624,184 @@ namespace Nyon::Physics
                                                            const TransformComponent& transformB,
                                                            ECS::ContactManifold& manifold)
     {
-        // Polygon vs Capsule: test polygon edges against capsule line
+        // Polygon vs Capsule: test polygon vertices against capsule line segment
         manifold.touching = false;
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
         
-        // For now, approximate capsule as circle at its center
-        // TODO: Implement full polygon-capsule SAT test
         const auto& capsule = capsuleCollider.GetCapsule();
-        Math::Vector2 capCenter = transformB.position + (capsule.center1 + capsule.center2) * 0.5f;
+        const auto& polygon = polyCollider.GetPolygon();
         
-        // Create temporary circle for approximation
-        ColliderComponent::CircleShape tempCircle{{0.0f, 0.0f}, capsule.radius};
-        TransformComponent tempTransform;
-        tempTransform.position = capCenter;
-        tempTransform.rotation = 0.0f;
+        if (polygon.vertices.empty())
+            return manifold;
         
-        return CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
-                            tempCircle, polyCollider.GetPolygon(),
-                            tempTransform, transformA, true, manifold);
+        // Transform capsule endpoints to world space with rotation
+        float cosB = std::cos(transformB.rotation);
+        float sinB = std::sin(transformB.rotation);
+        Math::Vector2 c1 = {
+            transformB.position.x + (capsule.center1.x * cosB - capsule.center1.y * sinB),
+            transformB.position.y + (capsule.center1.x * sinB + capsule.center1.y * cosB)
+        };
+        Math::Vector2 c2 = {
+            transformB.position.x + (capsule.center2.x * cosB - capsule.center2.y * sinB),
+            transformB.position.y + (capsule.center2.x * sinB + capsule.center2.y * cosB)
+        };
+        
+        // Transform polygon vertices to world space
+        float cosA = std::cos(transformA.rotation);
+        float sinA = std::sin(transformA.rotation);
+        std::vector<Math::Vector2> worldVerts;
+        worldVerts.reserve(polygon.vertices.size());
+        for (const auto& v : polygon.vertices)
+        {
+            Math::Vector2 rotated{
+                v.x * cosA - v.y * sinA,
+                v.x * sinA + v.y * cosA
+            };
+            worldVerts.push_back(transformA.position + rotated);
+        }
+        
+        // Find the closest distance between polygon vertices and capsule segment
+        float minSeparation = -std::numeric_limits<float>::infinity();
+        Math::Vector2 contactPoint{0.0f, 0.0f};
+        Math::Vector2 normal{1.0f, 0.0f};
+        int closestVertexIndex = -1;
+        
+        // Test each polygon vertex against the capsule line segment [c1, c2]
+        for (size_t i = 0; i < worldVerts.size(); ++i)
+        {
+            const Math::Vector2& p = worldVerts[i];
+            
+            // Find closest point on capsule segment to this vertex
+            Math::Vector2 segDir = c2 - c1;
+            float segLenSq = Dot(segDir, segDir);
+            
+            Math::Vector2 closestOnSeg;
+            if (segLenSq < 1e-8f)
+            {
+                // Capsule is degenerate (point)
+                closestOnSeg = c1;
+            }
+            else
+            {
+                // Project vertex onto line, clamp to segment
+                float t = Dot(p - c1, segDir) / segLenSq;
+                t = std::clamp(t, 0.0f, 1.0f);
+                closestOnSeg = c1 + segDir * t;
+            }
+            
+            // Distance from vertex to capsule surface
+            Math::Vector2 delta = p - closestOnSeg;
+            float dist = delta.Length();
+            
+            // Check if vertex is inside capsule
+            float separation = dist - capsule.radius;
+            if (separation < minSeparation || closestVertexIndex == -1)
+            {
+                minSeparation = separation;
+                closestVertexIndex = static_cast<int>(i);
+                
+                // Normal points from capsule to polygon
+                if (dist > 1e-6f)
+                {
+                    normal = Normalize(delta);
+                }
+                else
+                {
+                    // Vertex is at capsule center - use perpendicular to segment
+                    normal = Normalize(Math::Vector2{-segDir.y, segDir.x});
+                }
+                
+                // Contact point on capsule surface
+                contactPoint = closestOnSeg + normal * capsule.radius;
+            }
+        }
+        
+        // Also test capsule endpoints against polygon edges (for deep penetration cases)
+        Math::Vector2 capPoints[2] = {c1, c2};
+        for (int capIdx = 0; capIdx < 2; ++capIdx)
+        {
+            const Math::Vector2& capPt = capPoints[capIdx];
+            
+            // Test against each polygon edge
+            for (size_t i = 0; i < worldVerts.size(); ++i)
+            {
+                size_t next = (i + 1) % worldVerts.size();
+                Math::Vector2 edgeStart = worldVerts[i];
+                Math::Vector2 edgeEnd = worldVerts[next];
+                Math::Vector2 edgeDir = edgeEnd - edgeStart;
+                float edgeLenSq = Dot(edgeDir, edgeDir);
+                
+                if (edgeLenSq < 1e-8f)
+                    continue; // Degenerate edge
+                
+                // Project capsule endpoint onto edge
+                float t = Dot(capPt - edgeStart, edgeDir) / edgeLenSq;
+                t = std::clamp(t, 0.0f, 1.0f);
+                Math::Vector2 closestOnEdge = edgeStart + edgeDir * t;
+                
+                // Distance from capsule endpoint to polygon edge
+                Math::Vector2 delta = capPt - closestOnEdge;
+                float dist = delta.Length();
+                float separation = dist - capsule.radius;
+                
+                // Check if this is a deeper penetration
+                if (separation < minSeparation)
+                {
+                    minSeparation = separation;
+                    closestVertexIndex = -1; // Mark as edge contact
+                    
+                    if (dist > 1e-6f)
+                    {
+                        normal = Normalize(delta);
+                    }
+                    else
+                    {
+                        // Use polygon edge normal
+                        Math::Vector2 edgeNormal{-edgeDir.y, edgeDir.x};
+                        normal = Normalize(edgeNormal);
+                        // Ensure normal points toward capsule
+                        if (Dot(normal, delta) < 0.0f)
+                            normal = -normal;
+                    }
+                    
+                    contactPoint = closestOnEdge;
+                }
+            }
+        }
+        
+        // Check if we have a collision
+        if (minSeparation > 0.0f)
+            return manifold; // No collision
+        
+        float penetration = -minSeparation;
+        
+        // Create contact manifold
+        ECS::ContactPoint cp{};
+        cp.position = contactPoint;
+        cp.normal = normal;
+        cp.separation = -penetration;
+        cp.normalImpulse = 0.0f;
+        cp.tangentImpulse = 0.0f;
+        cp.normalMass = 0.0f;
+        cp.tangentMass = 0.0f;
+        cp.featureId = static_cast<uint32_t>(closestVertexIndex >= 0 ? closestVertexIndex : 0xFF);
+        cp.persisted = false;
+        
+        manifold.points.push_back(cp);
+        manifold.normal = normal;
+        
+        // Store local-space data (relative to polygon body A)
+        Math::Vector2 invRot = Rotate(normal, -transformA.rotation);
+        manifold.localNormal = invRot;
+        Math::Vector2 localContact = Rotate(contactPoint - transformA.position, -transformA.rotation);
+        manifold.localPoint = localContact;
+        
+        manifold.touching = true;
+        
+        return manifold;
     }
     
     ECS::ContactManifold ManifoldGenerator::CapsuleCapsule(uint32_t entityIdA,

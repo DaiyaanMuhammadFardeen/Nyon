@@ -145,6 +145,36 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 return; // Skip sleeping bodies
             }
             
+            // === COMPUTE MASS PROPERTIES FROM COLLIDER SHAPE ===
+            // This ensures inertia is correctly computed from shape geometry
+            if (!body.isStatic && m_ComponentStore->HasComponent<ColliderComponent>(entityId))
+            {
+                const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
+                
+                // Calculate mass from area and density
+                float area = collider.CalculateArea();
+                float density = collider.material.density;
+                float calculatedMass = area * density;
+                
+                // Only update mass if it hasn't been explicitly set (i.e., still default 1.0)
+                // or if the calculated mass is significantly different
+                if (body.mass <= 0.0f || std::abs(body.mass - calculatedMass) > 0.01f)
+                {
+                    body.SetMass(calculatedMass);
+                }
+                
+                // Calculate and set inertia from shape geometry
+                float unitInertia = collider.CalculateInertiaForUnitDensity();
+                float calculatedInertia = unitInertia * density;
+                
+                // Only update inertia if it hasn't been explicitly set (i.e., still default 1.0)
+                // or if the calculated inertia is significantly different
+                if (body.inertia <= 0.0f || std::abs(body.inertia - calculatedInertia) > 0.01f)
+                {
+                    body.SetInertia(calculatedInertia);
+                }
+            }
+            
             SolverBody solverBody;
             solverBody.entityId = entityId;
             solverBody.isStatic = body.isStatic;
@@ -167,9 +197,12 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             solverBody.velocity = body.velocity;
             solverBody.angularVelocity = body.angularVelocity;
             
-            // Initialize forces
-            solverBody.force = Math::Vector2{0.0f, 0.0f};
-            solverBody.torque = 0.0f;
+            // Initialize forces from ECS component (user-applied forces, gravity, etc.)
+            solverBody.force = body.force;
+            solverBody.torque = body.torque;
+            
+            // Clear ECS-side forces so they don't accumulate across frames
+            body.ClearForces();
             
             m_SolverBodies.push_back(solverBody);
             m_EntityToSolverIndex[entityId] = solverIndex++;
@@ -229,35 +262,26 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation);
         });
         
-        // Query broad phase for overlapping pairs
-        BroadPhaseCallback callback;
-        callback.system = this;
-        
-        // Collect all proxy-entity pairs first to avoid iterator invalidation
-        std::vector<std::pair<uint32_t, uint32_t>> proxyPairs(m_ShapeProxyMap.begin(), m_ShapeProxyMap.end());
-        
-        // MANUAL OVERLAP TEST - brute force check all pairs
-        for (size_t i = 0; i < proxyPairs.size(); ++i)
+        // Query broad phase for overlapping pairs using DynamicTree
+        // This is O(n log n) instead of O(n²) brute force
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
         {
-            for (size_t j = i + 1; j < proxyPairs.size(); ++j)
-            {
-                const auto& [entityA, proxyA] = proxyPairs[i];
-                const auto& [entityB, proxyB] = proxyPairs[j];
-                    
-                const auto& aabbA = m_BroadPhaseTree.GetFatAABB(proxyA);
-                const auto& aabbB = m_BroadPhaseTree.GetFatAABB(proxyB);
-                    
-                bool overlaps = !(aabbA.upperBound.x <= aabbB.lowerBound.x || 
-                                aabbA.lowerBound.x >= aabbB.upperBound.x ||
-                                aabbA.upperBound.y <= aabbB.lowerBound.y || 
-                                aabbA.lowerBound.y >= aabbB.upperBound.y);
-                    
-                if (overlaps)
-                {
-                    m_BroadPhasePairs.emplace_back(entityA, entityB);
-                    std::cerr << "[PHYSICS] COLLISION DETECTED: entities " << entityA << " and " << entityB << std::endl;
-                }
-            }
+            // Only query for dynamic bodies (static bodies don't initiate collision checks)
+            if (!m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId))
+                continue;
+                
+            const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
+            if (body.isStatic)
+                continue;
+            
+            // Get the fat AABB for this proxy
+            const auto& fatAABB = m_BroadPhaseTree.GetFatAABB(proxyId);
+            
+            // Query the tree for overlapping proxies
+            BroadPhaseCallback callback;
+            callback.system = this;
+            callback.entityId = entityId;
+            m_BroadPhaseTree.Query(fatAABB, &callback);
         }
         
         m_Stats.broadPhasePairs = m_BroadPhasePairs.size();
@@ -347,7 +371,6 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
     void PhysicsPipelineSystem::ConstraintInitialization()
     {
         m_VelocityConstraints.clear();
-        m_PositionConstraints.clear();
         
         // Create velocity constraints from contact manifolds
         for (const auto& manifold : m_ContactManifolds)
@@ -356,8 +379,6 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             vc.normal = manifold.normal;
             vc.tangent = Math::Vector2{-manifold.normal.y, manifold.normal.x};
             vc.points = manifold.points;
-            vc.friction = 0.3f; // Default friction
-            vc.restitution = 0.2f; // Default restitution
             
             // Get solver indices
             auto itA = m_EntityToSolverIndex.find(manifold.entityIdA);
@@ -375,6 +396,17 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 vc.invMassB = bodyB.invMass;
                 vc.invIA = bodyA.invInertia;
                 vc.invIB = bodyB.invInertia;
+                
+                // === COMPUTE FRICTION AND RESTITUTION FROM MATERIALS ===
+                // Look up both colliders to get material properties
+                const auto& colliderA = m_ComponentStore->GetComponent<ColliderComponent>(manifold.entityIdA);
+                const auto& colliderB = m_ComponentStore->GetComponent<ColliderComponent>(manifold.entityIdB);
+                
+                // Mix friction using geometric mean (standard approach)
+                vc.friction = std::sqrt(colliderA.material.friction * colliderB.material.friction);
+                
+                // Mix restitution using maximum (standard approach)
+                vc.restitution = std::max(colliderA.material.restitution, colliderB.material.restitution);
                 
                 // Compute effective mass for each contact point
                 for (auto& point : vc.points)
@@ -413,15 +445,23 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                                          - vA - Math::Vector2::Cross(wA, rA);
                     float vRel = Math::Vector2::Dot(relVel, vc.normal);
 
-                    // Only apply restitution for separating contacts above threshold
-                    const float RESTITUTION_VELOCITY_THRESHOLD = 1.0f;
-                    if (vRel < -RESTITUTION_VELOCITY_THRESHOLD)
+                    // Use world restitution threshold instead of hardcoded value
+                    if (vRel < -m_PhysicsWorld->restitutionThreshold)
                     {
                         point.velocityBias = -vc.restitution * vRel;
                     }
                     else
                     {
                         point.velocityBias = 0.0f;
+                    }
+                    
+                    // Restore cached impulses for warm starting
+                    uint64_t cacheKey = MakeImpulseCacheKey(manifold.entityIdA, manifold.entityIdB, point.featureId);
+                    auto cacheIt = m_ImpulseCache.find(cacheKey);
+                    if (cacheIt != m_ImpulseCache.end())
+                    {
+                        point.normalImpulse = cacheIt->second.normalImpulse;
+                        point.tangentImpulse = cacheIt->second.tangentImpulse;
                     }
                 }
                 
@@ -491,8 +531,21 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(solverBody.entityId))
             {
                 auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(solverBody.entityId);
-                body.velocity = solverBody.velocity;
-                body.angularVelocity = solverBody.angularVelocity;
+                
+                // === ENFORCE MOTION LOCKS ===
+                Math::Vector2 lockedVelocity = solverBody.velocity;
+                float lockedAngularVelocity = solverBody.angularVelocity;
+                
+                if (body.motionLocks.lockTranslationX)
+                    lockedVelocity.x = 0.0f;
+                if (body.motionLocks.lockTranslationY)
+                    lockedVelocity.y = 0.0f;
+                if (body.motionLocks.lockRotation)
+                    lockedAngularVelocity = 0.0f;
+                
+                body.velocity = lockedVelocity;
+                body.angularVelocity = lockedAngularVelocity;
+                
                 // Damping is already applied in ConstraintSolverSystem - no additional damping here
             }
         }
@@ -501,13 +554,43 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
     void PhysicsPipelineSystem::StoreImpulses()
     {
         // Store accumulated impulses for warm starting next frame
-        for (auto& constraint : m_VelocityConstraints)
+        std::unordered_map<uint64_t, bool> activeKeys; // Track which contacts are still active
+        
+        for (const auto& constraint : m_VelocityConstraints)
         {
-            for (auto& point : constraint.points)
+            uint32_t entityIdA = m_SolverBodies[constraint.indexA].entityId;
+            uint32_t entityIdB = m_SolverBodies[constraint.indexB].entityId;
+            
+            for (const auto& point : constraint.points)
             {
-                // Preserve impulses at full value for effective warm starting
-                // No decay - impulses should be maintained across frames
+                // Create cache key from entity pair + feature ID
+                uint64_t cacheKey = MakeImpulseCacheKey(entityIdA, entityIdB, point.featureId);
+                
+                // Store impulses
+                m_ImpulseCache[cacheKey] = {
+                    point.normalImpulse,
+                    point.tangentImpulse
+                };
+                
+                // Mark this key as active
+                activeKeys[cacheKey] = true;
             }
+        }
+        
+        // Evict stale cache entries (contacts that no longer exist)
+        // Only evict if the contact is not in the active set
+        std::vector<uint64_t> keysToRemove;
+        for (const auto& [key, impulse] : m_ImpulseCache)
+        {
+            if (activeKeys.find(key) == activeKeys.end())
+            {
+                keysToRemove.push_back(key);
+            }
+        }
+        
+        for (uint64_t key : keysToRemove)
+        {
+            m_ImpulseCache.erase(key);
         }
     }
 
@@ -540,14 +623,37 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             if (m_ComponentStore->HasComponent<TransformComponent>(solverBody.entityId))
             {
                 auto& transform = m_ComponentStore->GetComponent<TransformComponent>(solverBody.entityId);
+                
+                // Get motion locks from physics body if it exists
+                bool hasLocks = false;
+                PhysicsBodyComponent::MotionLocks locks{};
+                if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(solverBody.entityId))
+                {
+                    const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(solverBody.entityId);
+                    locks = body.motionLocks;
+                    hasLocks = true;
+                }
 
                 // ✅ Write back the pre-integration position for interpolation
                 transform.previousPosition = solverBody.prevPosition;
                 transform.previousRotation = solverBody.prevAngle;
 
-                // Current (post-integration) state
-                transform.position = solverBody.position;
-                transform.rotation = solverBody.angle;
+                // Current (post-integration) state with motion locks enforced
+                Math::Vector2 lockedPosition = solverBody.position;
+                float lockedAngle = solverBody.angle;
+                
+                if (hasLocks)
+                {
+                    if (locks.lockTranslationX)
+                        lockedPosition.x = transform.position.x; // Keep previous X
+                    if (locks.lockTranslationY)
+                        lockedPosition.y = transform.position.y; // Keep previous Y
+                    if (locks.lockRotation)
+                        lockedAngle = transform.rotation; // Keep previous rotation
+                }
+                
+                transform.position = lockedPosition;
+                transform.rotation = lockedAngle;
             }
         }
         
@@ -568,9 +674,13 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
     {
         uint32_t otherEntityId = userData;
         
+        // Separate debug counter for broad-phase to avoid corrupting main physics debug throttling
+        static int s_BroadPhaseDebugCounter = 0;
+        const int BROAD_PHASE_DEBUG_INTERVAL = 50; // Less frequent due to many callback invocations
+        
         // Debug logging using system pointer
-        if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
-            s_DebugFrameCounter = 0;
+        if (++s_BroadPhaseDebugCounter >= BROAD_PHASE_DEBUG_INTERVAL) {
+            s_BroadPhaseDebugCounter = 0;
             std::cerr << "[PHYSICS@0]   QueryCallback: querying entity=" << entityId 
                       << " found node=" << nodeId << " otherEntity=" << otherEntityId << std::endl;
         }
@@ -578,8 +688,8 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         // Avoid self-collision and ensure canonical pair ordering
         if (otherEntityId <= entityId)
         {
-            if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
-                s_DebugFrameCounter = 0;
+            if (++s_BroadPhaseDebugCounter >= BROAD_PHASE_DEBUG_INTERVAL) {
+                s_BroadPhaseDebugCounter = 0;
                 std::cerr << "[PHYSICS@0]     Skipping: otherEntityId <= entityId" << std::endl;
             }
             return true;
@@ -596,23 +706,23 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             if (colliderA.filter.ShouldCollide(colliderB.filter))
             {
                 system->m_BroadPhasePairs.emplace_back(entityId, otherEntityId);
-                if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
-                    s_DebugFrameCounter = 0;
+                if (++s_BroadPhaseDebugCounter >= BROAD_PHASE_DEBUG_INTERVAL) {
+                    s_BroadPhaseDebugCounter = 0;
                     std::cerr << "[PHYSICS@0]     Added pair: (" << entityId << "," << otherEntityId << ")" << std::endl;
                 }
             }
             else
             {
-                if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
-                    s_DebugFrameCounter = 0;
+                if (++s_BroadPhaseDebugCounter >= BROAD_PHASE_DEBUG_INTERVAL) {
+                    s_BroadPhaseDebugCounter = 0;
                     std::cerr << "[PHYSICS@0]     Filtered out by collision filter" << std::endl;
                 }
             }
         }
         else
         {
-            if (++s_DebugFrameCounter >= DEBUG_OUTPUT_INTERVAL) {
-                s_DebugFrameCounter = 0;
+            if (++s_BroadPhaseDebugCounter >= BROAD_PHASE_DEBUG_INTERVAL) {
+                s_BroadPhaseDebugCounter = 0;
                 std::cerr << "[PHYSICS@0]     One or both entities missing ColliderComponent" << std::endl;
             }
         }
@@ -630,17 +740,11 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         aabb.lowerBound = {min.x, min.y};
         aabb.upperBound = {max.x, max.y};
         
-        // Expand AABB slightly for better broad phase performance
-        Physics::AABB fatAABB = aabb;
-        fatAABB.lowerBound.x -= 0.1f;
-        fatAABB.lowerBound.y -= 0.1f;
-        fatAABB.upperBound.x += 0.1f;
-        fatAABB.upperBound.y += 0.1f;
-        
+        // No manual padding - MoveProxy/CreateProxy will apply AABB_EXTENSION internally
         NYON_DEBUG_LOG_EVERY("  AABB entity=" << entityId 
                           << " center=(" << position.x << "," << position.y << ")"
-                          << " bounds=[(" << fatAABB.lowerBound.x << "," << fatAABB.lowerBound.y << ")-"
-                          << "(" << fatAABB.upperBound.x << "," << fatAABB.upperBound.y << ")]");
+                          << " bounds=[(" << aabb.lowerBound.x << "," << aabb.lowerBound.y << ")-"
+                          << "(" << aabb.upperBound.x << "," << aabb.upperBound.y << ")]");
         
         auto it = m_ShapeProxyMap.find(entityId);
         if (it != m_ShapeProxyMap.end())
@@ -651,12 +755,12 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
                 displacement = body.velocity * FIXED_TIMESTEP;
             }
-            m_BroadPhaseTree.MoveProxy(it->second, fatAABB, displacement);
+            m_BroadPhaseTree.MoveProxy(it->second, aabb, displacement);
         }
         else
         {
             // Create new proxy
-            uint32_t proxyId = m_BroadPhaseTree.CreateProxy(fatAABB, entityId);
+            uint32_t proxyId = m_BroadPhaseTree.CreateProxy(aabb, entityId);
             m_ShapeProxyMap[entityId] = proxyId;
         }
     }
@@ -720,14 +824,17 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         manifold.points.reserve(generatedManifold.points.size());
         manifold.normal = generatedManifold.normal;
         
-        for (const auto& point : generatedManifold.points)
+        for (size_t i = 0; i < generatedManifold.points.size(); ++i)
         {
+            const auto& point = generatedManifold.points[i];
             ContactPoint contactPoint;
             contactPoint.position = point.position;
             contactPoint.normal = point.normal;
             contactPoint.separation = point.separation;
             contactPoint.normalImpulse = 0.0f;
             contactPoint.tangentImpulse = 0.0f;
+            // Use feature ID from ECS manifold if available, otherwise generate from point index
+            contactPoint.featureId = point.featureId != 0 ? point.featureId : (i + 1);
             manifold.points.push_back(contactPoint);
         }
         
@@ -764,6 +871,17 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
         }
     }
 
+    uint64_t PhysicsPipelineSystem::MakeImpulseCacheKey(uint32_t entityIdA, uint32_t entityIdB, uint32_t featureId) const
+    {
+        // Create a unique key from entity pair (order-independent) + feature ID
+        uint32_t minEntity = std::min(entityIdA, entityIdB);
+        uint32_t maxEntity = std::max(entityIdA, entityIdB);
+        
+        // Combine entity pair into 64-bit key, then XOR with feature ID
+        uint64_t pairKey = (static_cast<uint64_t>(minEntity) << 32) | static_cast<uint64_t>(maxEntity);
+        return pairKey ^ (static_cast<uint64_t>(featureId) << 32);
+    }
+
     void PhysicsPipelineSystem::SolveVelocityConstraints()
     {
         for (auto& constraint : m_VelocityConstraints)
@@ -771,18 +889,15 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
             auto& bodyA = m_SolverBodies[constraint.indexA];
             auto& bodyB = m_SolverBodies[constraint.indexB];
             
-            Math::Vector2 vA = bodyA.velocity;
-            Math::Vector2 vB = bodyB.velocity;
-            float wA = bodyA.angularVelocity;
-            float wB = bodyB.angularVelocity;
-            
             for (auto& point : constraint.points)
             {
-                // Relative velocity at contact point
+                // Recompute rA, rB from LIVE body positions each iteration:
                 Math::Vector2 rA = point.position - bodyA.position;
                 Math::Vector2 rB = point.position - bodyB.position;
                 
-                Math::Vector2 dv = vB + Math::Vector2::Cross(wB, rB) - vA - Math::Vector2::Cross(wA, rA);
+                // Use LIVE body velocities (not the stale snapshot):
+                Math::Vector2 dv = bodyB.velocity + Math::Vector2::Cross(bodyB.angularVelocity, rB)
+                                 - bodyA.velocity - Math::Vector2::Cross(bodyA.angularVelocity, rA);
                 
                 // Normal impulse
                 float vn = Math::Vector2::Dot(dv, constraint.normal);
@@ -806,6 +921,34 @@ void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentSt
                 {
                     bodyB.velocity += P * constraint.invMassB;
                     bodyB.angularVelocity += constraint.invIB * Math::Vector2::Cross(rB, P);
+                }
+                
+                // --- Tangent (friction) solve ---
+                // Recompute relative velocity for tangent direction
+                Math::Vector2 dvTangent = bodyB.velocity + Math::Vector2::Cross(bodyB.angularVelocity, rB)
+                                        - bodyA.velocity - Math::Vector2::Cross(bodyA.angularVelocity, rA);
+                float vt = Math::Vector2::Dot(dvTangent, constraint.tangent);
+                float tangentImpulse = -point.tangentMass * vt;
+                
+                // Friction cone clamp (Coulomb friction): |tangentImpulse| <= friction * normalImpulse
+                float maxFriction = constraint.friction * point.normalImpulse;
+                float oldTangentImpulse = point.tangentImpulse;
+                point.tangentImpulse = std::clamp(oldTangentImpulse + tangentImpulse,
+                                                   -maxFriction, maxFriction);
+                tangentImpulse = point.tangentImpulse - oldTangentImpulse;
+                
+                // Apply tangent impulse
+                Math::Vector2 Pt = constraint.tangent * tangentImpulse;
+                if (!bodyA.isStatic)
+                {
+                    bodyA.velocity -= Pt * constraint.invMassA;
+                    bodyA.angularVelocity -= constraint.invIA * Math::Vector2::Cross(rA, Pt);
+                }
+                
+                if (!bodyB.isStatic)
+                {
+                    bodyB.velocity += Pt * constraint.invMassB;
+                    bodyB.angularVelocity += constraint.invIB * Math::Vector2::Cross(rB, Pt);
                 }
             }
         }

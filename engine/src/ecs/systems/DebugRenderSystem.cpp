@@ -159,14 +159,15 @@ namespace Nyon::ECS
                 collider = &m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             }
             
-            // Get transform data from TransformComponent if available so debug shapes match the scene
+            // Get transform data with interpolation for smooth rendering
             Math::Vector2 position = {0.0f, 0.0f};
             float angle = 0.0f;
             if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
             {
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-                position = transform.position;
-                angle = transform.rotation;
+                // Use interpolated position and rotation based on render alpha
+                position = transform.GetInterpolatedPosition(m_Alpha);
+                angle = transform.GetInterpolatedRotation(m_Alpha);
             }
             
             // Color based on body state
@@ -216,14 +217,14 @@ namespace Nyon::ECS
                 
             const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             
-            // Use transform position and rotation if available so AABBs line up with rotated shapes
+            // Use interpolated transform position and rotation for smooth rendering
             Math::Vector2 position = {0.0f, 0.0f};
             float angle = 0.0f;
             if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
             {
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-                position = transform.position;
-                angle = transform.rotation;
+                position = transform.GetInterpolatedPosition(m_Alpha);
+                angle = transform.GetInterpolatedRotation(m_Alpha);
             }
             
             Math::Vector2 min, max;
@@ -272,7 +273,7 @@ namespace Nyon::ECS
             if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
             {
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-                position = transform.position;
+                position = transform.GetInterpolatedPosition(m_Alpha);
             }
             
             Math::Vector2 com = position + body.centerOfMass;

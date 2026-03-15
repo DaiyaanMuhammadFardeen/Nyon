@@ -96,8 +96,16 @@ namespace Nyon
         // Render debug information if DebugRenderSystem exists (use cached pointer)
         if (m_DebugRenderSystem)
         {
+            // Pass interpolation alpha to DebugRenderSystem for smooth rendering
+            m_DebugRenderSystem->SetInterpolationAlpha(alpha);
+            
+            // Wrap debug rendering in its own BeginScene/EndScene to ensure
+            // proper setup of vertex buffers, shader uniforms, and GL state.
+            // This prevents stale matrices from corrupting debug output when
+            // future changes add post-processing, multiple render targets, etc.
+            Graphics::Renderer2D::BeginScene();
             m_DebugRenderSystem->RenderDebugInfo();
-            Graphics::Renderer2D::Flush();  // Flush debug shapes immediately
+            Graphics::Renderer2D::EndScene();
         }
     }
     

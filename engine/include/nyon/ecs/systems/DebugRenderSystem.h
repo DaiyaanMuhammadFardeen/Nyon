@@ -27,6 +27,10 @@ namespace Nyon::ECS
         // Render debug information (called from render thread, not physics thread)
         void RenderDebugInfo();
         
+        // Set interpolation alpha for smooth rendering between physics steps
+        void SetInterpolationAlpha(float alpha) { m_Alpha = alpha; }
+        float GetInterpolationAlpha() const { return m_Alpha; }
+        
         // Debug drawing configuration
         void SetFlags(bool drawShapes, bool drawJoints, bool drawAABBs, 
                      bool drawContacts, bool drawCOM);
@@ -114,6 +118,9 @@ namespace Nyon::ECS
         bool m_DrawContacts = false;
         bool m_DrawCOM = false;
         bool m_DrawIslands = false;
+        
+        // Interpolation alpha for smooth rendering between physics steps
+        float m_Alpha = 1.0f;
         
         // Flag to control when debug rendering should occur
         bool m_ShouldRender = false;

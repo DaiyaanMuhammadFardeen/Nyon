@@ -57,7 +57,7 @@ namespace Nyon::ECS
     struct PhysicsWorldComponent
     {
         // === SIMULATION SETTINGS ===
-        Math::Vector2 gravity = {0.0f, 980.0f};      // Gravity vector (pixels/sec²) - reduced from 980
+        Math::Vector2 gravity = {0.0f, -980.0f};     // Gravity vector (pixels/sec²) - downward in Y-up screen space
         float timeStep = 1.0f / 60.0f;              // Fixed time step (seconds)
         int velocityIterations = 8;                 // Velocity constraint solver iterations
         int positionIterations = 3;                 // Position constraint solver iterations
@@ -65,7 +65,7 @@ namespace Nyon::ECS
         
         // === POSITION CORRECTION PARAMETERS ===
         float baumgarteBeta = 0.2f;                 // Baumgarte stabilization factor
-        float linearSlop = 0.005f;                  // Linear slop for position correction
+        float linearSlop = 0.5f;                    // Linear slop for position correction (half a pixel for pixel-unit worlds)
         float maxLinearCorrection = 0.2f;           // Maximum linear position correction
         float maxAngularCorrection = 0.1f;          // Maximum angular position correction
         float maxPenetrationCorrection = 50.0f;     // Maximum penetration depth correction

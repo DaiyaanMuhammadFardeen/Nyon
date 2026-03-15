@@ -79,6 +79,13 @@ namespace Nyon::ECS
             UpdateMassProperties();
         }
         
+        // Set inertia directly (called when computing from collider shape)
+        void SetInertia(float newInertia)
+        {
+            inertia = newInertia;
+            inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
+        }
+        
         // For now this only handles body type flags and scalar mass.
         // Shape-specific inertia is supplied when the collider is initialized.
         void UpdateMassProperties()

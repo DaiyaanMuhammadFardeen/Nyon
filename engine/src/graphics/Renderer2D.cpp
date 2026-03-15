@@ -25,10 +25,10 @@ namespace Nyon::Graphics
     
     glm::mat4 Camera2D::GetViewMatrix() const
     {
-        // TRS inverse: scale by zoom, rotate, then translate to -position
+        // TRS inverse: rotate, then translate to -position (NO zoom scaling here)
         // GLM applies transformations right-to-left (column-major convention)
+        // Zoom is applied ONLY in projection matrix via ortho bounds division
         glm::mat4 view = glm::mat4(1.0f);
-        view = glm::scale(view, glm::vec3(zoom, zoom, 1.0f));
         view = glm::rotate(view, -rotation, glm::vec3(0.0f, 0.0f, 1.0f));
         view = glm::translate(view, glm::vec3(-position.x, -position.y, 0.0f));
         return view;

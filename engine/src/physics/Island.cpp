@@ -156,6 +156,11 @@ namespace Nyon::Physics
                 Island isolatedIsland;
                 isolatedIsland.bodyIds.push_back(entityId);
                 isolatedIsland.canSleep = IsBodyEligibleForSleeping(entityId);
+                
+                // Register isolated body in island map BEFORE adding to array
+                size_t islandIndex = m_AllIslands.size();
+                m_BodyIslandMap[entityId] = islandIndex;
+                
                 m_AllIslands.push_back(std::move(isolatedIsland));
                 m_VisitedBodies.insert(entityId);
             }
