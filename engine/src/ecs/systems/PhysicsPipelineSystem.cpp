@@ -100,13 +100,20 @@ namespace Nyon::ECS
                 }
                 else
                 {
-                // For dynamic bodies, check both island manager and component's own awake state
-                // This ensures newly created bodies (not yet in island manager) are still processed
-                bool islandAwake = m_IslandManager->IsBodyAwake(entityId);
-                bool componentAwake = body.isAwake;
+                // For dynamic bodies, check both island manager and component's own awake state.
+                // Bodies that explicitly disallow sleeping should always be processed.
+                if (!body.allowSleep)
+                {
+                    shouldInclude = true;
+                }
+                else
+                {
+                    bool islandAwake = m_IslandManager->IsBodyAwake(entityId);
+                    bool componentAwake = body.isAwake;
 
-                // Include if either says awake (treat unknown bodies as awake)
-                shouldInclude = islandAwake || componentAwake;
+                    // Include if either says awake (treat unknown bodies as awake)
+                    shouldInclude = islandAwake || componentAwake;
+                }
                 }
 
                 if (!shouldInclude)
@@ -568,10 +575,19 @@ namespace Nyon::ECS
 
         // Update body sleeping states based on island manager
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, PhysicsBodyComponent& body) {
-                if (!body.isStatic)
+                if (body.isStatic)
+                    return;
+
+                // Bodies that explicitly disallow sleeping should always remain awake.
+                if (!body.allowSleep)
                 {
-                body.isAwake = m_IslandManager->IsBodyAwake(entityId);
+                    body.SetAwake(true);
+                    if (m_IslandManager)
+                        m_IslandManager->WakeIslandContaining(entityId);
+                    return;
                 }
+
+                body.isAwake = m_IslandManager->IsBodyAwake(entityId);
                 });
 
         m_Stats.awakeBodies = m_Stats.islandStats.awakeBodies;
