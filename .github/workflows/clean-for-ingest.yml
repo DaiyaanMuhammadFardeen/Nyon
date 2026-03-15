@@ -2,7 +2,7 @@ name: Strip Comments and Sync
 on:
   push:
     branches:
-      - Temporary  # Trigger whenever you push to main
+      - Testing  # Trigger whenever you push to main
 
 
 jobs:
