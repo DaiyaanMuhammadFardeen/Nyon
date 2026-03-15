@@ -8,6 +8,7 @@
 // Forward declarations
 namespace Nyon::ECS {
     class DebugRenderSystem;
+    class RenderSystem;
 }
 #include <memory>
 
@@ -37,7 +38,8 @@ namespace Nyon
         
         // Methods that can be overridden by games
         virtual void OnECSStart() {}  // Called after ECS initialization
-        virtual void OnECSUpdate(float deltaTime) {}  // Called after ECS systems update
+        virtual void OnECSUpdate(float deltaTime) {}  // Called after ECS systems update (user logic hook)
+        virtual void OnECSFixedUpdate(float deltaTime) {}  // Called during fixed-step update (physics logic hook)
         
         // Override base Application methods
         void OnStart() override final;
@@ -50,5 +52,7 @@ namespace Nyon
         ECS::SystemManager m_SystemManager;
         
         bool m_ECSInitialized;
+        ECS::DebugRenderSystem* m_DebugRenderSystem = nullptr;  // Cached pointer to avoid dynamic_cast every frame
+        std::unique_ptr<ECS::RenderSystem> m_RenderSystem;  // Separate render system - only called during interpolation
     };
 }

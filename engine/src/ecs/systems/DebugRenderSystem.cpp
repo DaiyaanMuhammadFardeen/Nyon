@@ -1,15 +1,22 @@
 #include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/ecs/EntityManager.h"
 #include "nyon/ecs/ComponentStore.h"
+#include "nyon/ecs/components/TransformComponent.h"
 #include <cfloat>
-#include <iostream>
+
+// Debug logging macro - only output in debug builds
+#ifdef _DEBUG
+#define NYON_DEBUG_LOG(x) std::cerr << x << std::endl
+#else
+#define NYON_DEBUG_LOG(x)
+#endif
 
 namespace Nyon::ECS
 {
     // Add debug output to constructor
     DebugRenderSystem::DebugRenderSystem()
     {
-        std::cout << "[DEBUG] DebugRenderSystem constructor called\n";
+        NYON_DEBUG_LOG("[DEBUG] DebugRenderSystem constructor called");
     }
     
     // Implement the missing NyonDebugRenderer methods using actual Renderer2D API
@@ -21,56 +28,11 @@ namespace Nyon::ECS
         Graphics::Renderer2D::DrawLine(p1, p2, color);
     }
     
-    void DebugRenderSystem::NyonDebugRenderer::QueueLine(const Math::Vector2& p1, const Math::Vector2& p2, 
-                                                        const Math::Vector3& color)
-    {
-        // This would queue the command, but we need access to the parent system
-        // For now, we'll implement this in the parent class methods
-    }
-    
     void DebugRenderSystem::NyonDebugRenderer::DrawSolidCircle(const Math::Vector2& center, float radius, 
                                                               const Math::Vector3& color)
     {
-        // Approximate circle with a quad (rectangle) since Renderer2D doesn't have circle drawing
-        Math::Vector2 size(radius * 2.0f, radius * 2.0f);
-        Math::Vector2 origin(radius, radius); // Center origin
-        Graphics::Renderer2D::DrawQuad(center, size, origin, color);
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::QueueCircle(const Math::Vector2& center, float radius, 
-                                                          const Math::Vector3& color)
-    {
-        // Implementation moved to parent class
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::DrawSolidPolygon(const std::vector<Math::Vector2>& vertices, 
-                                                               const Math::Vector3& color)
-    {
-        if (vertices.size() < 3) return;
-        
-        // For now, approximate with bounding box quad since Renderer2D doesn't have polygon drawing
-        Math::Vector2 min(FLT_MAX, FLT_MAX);
-        Math::Vector2 max(-FLT_MAX, -FLT_MAX);
-        
-        // Find bounding box
-        for (const auto& vertex : vertices) {
-            min.x = std::min(min.x, vertex.x);
-            min.y = std::min(min.y, vertex.y);
-            max.x = std::max(max.x, vertex.x);
-            max.y = std::max(max.y, vertex.y);
-        }
-        
-        Math::Vector2 center = {(min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f};
-        Math::Vector2 size = {max.x - min.x, max.y - min.y};
-        Math::Vector2 origin = {size.x * 0.5f, size.y * 0.5f};
-        
-        Graphics::Renderer2D::DrawQuad(center, size, origin, color);
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::QueuePolygon(const std::vector<Math::Vector2>& vertices, 
-                                                           const Math::Vector3& color)
-    {
-        // Implementation moved to parent class
+        // Use proper circle drawing with 16 segments
+        Graphics::Renderer2D::DrawSolidCircle(center, radius, color, 16);
     }
     
     void DebugRenderSystem::NyonDebugRenderer::DrawPoint(const Math::Vector2& point, float size, 
@@ -80,12 +42,6 @@ namespace Nyon::ECS
         Math::Vector2 quadSize(size, size);
         Math::Vector2 origin(size * 0.5f, size * 0.5f);
         Graphics::Renderer2D::DrawQuad(point, quadSize, origin, color);
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::QueuePoint(const Math::Vector2& point, float size, 
-                                                         const Math::Vector3& color)
-    {
-        // Implementation moved to parent class
     }
     
     void DebugRenderSystem::NyonDebugRenderer::DrawCircleOutline(const Math::Vector2& center, float radius, 
@@ -101,25 +57,26 @@ namespace Nyon::ECS
     void DebugRenderSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore)
     {
         // Store reference to component store for later use
+        // Physics world entity may not exist yet at this point (created in OnECSStart),
+        // so we do NOT cache m_PhysicsWorld here - it is resolved lazily in Update().
         m_ComponentStore = &componentStore;
-        
-        // Get physics world component
-        const auto& worldEntities = componentStore.GetEntitiesWithComponent<PhysicsWorldComponent>();
-        if (!worldEntities.empty())
-        {
-            m_PhysicsWorld = &componentStore.GetComponent<PhysicsWorldComponent>(worldEntities[0]);
-        }
-        
-        // No pointer caching - query fresh each Update() call
-        // This prevents dangling pointers when new entities are added
-        
-        // Renderer is now directly connected to Nyon's Renderer2D
-        // No initialization needed as it's handled by the concrete implementation
     }
     
     void DebugRenderSystem::Update(float deltaTime)
     {
-        if (!m_PhysicsWorld)
+        // Lazily find the physics world entity each update in case it is created
+        // after this system is initialized (e.g. in OnECSStart).
+        if (m_PhysicsWorldEntity == INVALID_ENTITY && m_ComponentStore)
+        {
+            const auto& worldEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsWorldComponent>();
+            if (!worldEntities.empty())
+            {
+                m_PhysicsWorldEntity = worldEntities[0];
+            }
+        }
+
+        // If we don't have a world entity yet, nothing to draw
+        if (m_PhysicsWorldEntity == INVALID_ENTITY)
             return;
             
         // Clear previous debug commands
@@ -143,10 +100,8 @@ namespace Nyon::ECS
         if (!m_ShouldRender || m_DebugCommands.empty())
             return;
             
-        // Begin rendering debug information
-        Graphics::Renderer2D::BeginScene();
-            
-        // Execute all queued debug draw commands
+        // DON'T call BeginScene() - it would clear the buffers that RenderSystem already drew!
+        // Just execute the debug draw commands directly
         for (const auto& cmd : m_DebugCommands)
         {
             switch (cmd.type)
@@ -155,29 +110,12 @@ namespace Nyon::ECS
                     Graphics::Renderer2D::DrawLine(cmd.p1, cmd.p2, cmd.color);
                     break;
                 case DebugDrawCommand::CIRCLE:
-                    // Approximate circle with quad
-                    Graphics::Renderer2D::DrawQuad(cmd.center, 
-                                                  {cmd.radius * 2.0f, cmd.radius * 2.0f},
-                                                  {cmd.radius, cmd.radius}, 
-                                                  cmd.color);
+                    Graphics::Renderer2D::DrawCircle(cmd.center, cmd.radius, cmd.color);
                     break;
                 case DebugDrawCommand::POLYGON:
-                    // Approximate polygon with bounding box
                     if (!cmd.vertices.empty())
                     {
-                        Math::Vector2 min(FLT_MAX, FLT_MAX);
-                        Math::Vector2 max(-FLT_MAX, -FLT_MAX);
-                        for (const auto& vertex : cmd.vertices)
-                        {
-                            min.x = std::min(min.x, vertex.x);
-                            min.y = std::min(min.y, vertex.y);
-                            max.x = std::max(max.x, vertex.x);
-                            max.y = std::max(max.y, vertex.y);
-                        }
-                        Math::Vector2 center = {(min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f};
-                        Math::Vector2 size = {max.x - min.x, max.y - min.y};
-                        Math::Vector2 origin = {size.x * 0.5f, size.y * 0.5f};
-                        Graphics::Renderer2D::DrawQuad(center, size, origin, cmd.color);
+                        Graphics::Renderer2D::DrawPolygon(cmd.vertices, cmd.color);
                     }
                     break;
                 case DebugDrawCommand::POINT:
@@ -189,8 +127,9 @@ namespace Nyon::ECS
             }
         }
         
-        // End rendering debug information
-        Graphics::Renderer2D::EndScene();
+        // DON'T Flush here - let EndScene from RenderSystem flush everything together!
+        // Flushing separately causes flickering and double-buffering issues
+        // Graphics::Renderer2D::Flush();  // REMOVED - causes flickering!
         
         // Reset for next frame
         m_ShouldRender = false;
@@ -221,9 +160,16 @@ namespace Nyon::ECS
                 collider = &m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             }
             
-            // Get transform data (would come from TransformComponent)
+            // Get transform data with interpolation for smooth rendering
             Math::Vector2 position = {0.0f, 0.0f};
             float angle = 0.0f;
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                // Use interpolated position and rotation based on render alpha
+                position = transform.GetInterpolatedPosition(m_Alpha);
+                angle = transform.GetInterpolatedRotation(m_Alpha);
+            }
             
             // Color based on body state
             Math::Vector3 color = {0.0f, 1.0f, 0.0f}; // Green default
@@ -256,8 +202,8 @@ namespace Nyon::ECS
     
     void DebugRenderSystem::DrawJoints()
     {
-        // Would iterate through JointComponents and draw joint visualization
-        // Placeholder implementation
+        // Joints not implemented yet - joint solver is not available
+        // Set m_DrawJoints = false to disable until joint implementation is complete
     }
     
     void DebugRenderSystem::DrawAABBs()
@@ -272,9 +218,18 @@ namespace Nyon::ECS
                 
             const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             
+            // Use interpolated transform position and rotation for smooth rendering
             Math::Vector2 position = {0.0f, 0.0f};
+            float angle = 0.0f;
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                position = transform.GetInterpolatedPosition(m_Alpha);
+                angle = transform.GetInterpolatedRotation(m_Alpha);
+            }
+            
             Math::Vector2 min, max;
-            collider.CalculateAABB(position, min, max);
+            collider.CalculateAABB(position, angle, min, max);
             
             // Draw AABB outline using queued commands
             Math::Vector3 color = {1.0f, 0.0f, 0.0f}; // Red for AABBs
@@ -287,8 +242,29 @@ namespace Nyon::ECS
     
     void DebugRenderSystem::DrawContacts()
     {
-        // Would draw contact points and normals
-        // Placeholder implementation
+        if (!m_ComponentStore || m_PhysicsWorldEntity == INVALID_ENTITY)
+            return;
+
+        if (!m_ComponentStore->HasComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity))
+            return;
+
+        const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+
+        // Draw contact points and normals from physics world
+        for (const auto& manifold : world.contactManifolds)
+        {
+            if (!manifold.touching) continue;
+
+            for (const auto& cp : manifold.points)
+            {
+                // Draw contact point as small red circle
+                QueueCircle(cp.position, 3.0f, {1.f, 0.f, 0.f});
+
+                // Draw contact normal as green line
+                Math::Vector2 normalEnd = cp.position + manifold.normal * 10.0f;
+                QueueLine(cp.position, normalEnd, {0.f, 1.f, 0.f});
+            }
+        }
     }
     
     void DebugRenderSystem::DrawCenterOfMass()
@@ -300,7 +276,13 @@ namespace Nyon::ECS
         {
             const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
             
-            Math::Vector2 position = {0.0f, 0.0f}; // From TransformComponent
+            Math::Vector2 position = {0.0f, 0.0f};
+            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
+            {
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+                position = transform.GetInterpolatedPosition(m_Alpha);
+            }
+            
             Math::Vector2 com = position + body.centerOfMass;
             
             // Draw center of mass as a small point using queued command
@@ -311,8 +293,8 @@ namespace Nyon::ECS
     
     void DebugRenderSystem::DrawIslands()
     {
-        // Would visualize island grouping for performance debugging
-        // Placeholder implementation
+        // Islands not implemented yet - sleep/island system needs implementation
+        // Set m_DrawIslands = false to disable
     }
     
     void DebugRenderSystem::QueueLine(const Math::Vector2& p1, const Math::Vector2& p2, const Math::Vector3& color)

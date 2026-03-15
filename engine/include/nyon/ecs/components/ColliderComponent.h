@@ -63,19 +63,19 @@ namespace Nyon::ECS
                 // Calculate true polygon centroid using area-weighted formula (shoelace method)
                 // This fixes angular dynamics errors for irregular polygons
                 centroid = {0.0f, 0.0f};
-                float signedArea = 0.0f;
+                float twoArea = 0.0f;
                 
                 size_t n = vertices.size();
                 for (size_t i = 0; i < n; ++i) {
                     size_t j = (i + 1) % n;
                     float cross = vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
-                    signedArea += cross;
+                    twoArea += cross;
                     centroid.x += (vertices[i].x + vertices[j].x) * cross;
                     centroid.y += (vertices[i].y + vertices[j].y) * cross;
                 }
                 
-                if (std::abs(signedArea) > 0.0001f) {
-                    centroid = centroid * (1.0f / (6.0f * (signedArea * 0.5f)));
+                if (std::abs(twoArea) > 0.0002f) {
+                    centroid = centroid * (1.0f / (3.0f * twoArea)); // Direct formula using 2*area
                 } else {
                     // Fallback to vertex average for degenerate cases
                     centroid = {0.0f, 0.0f};
@@ -90,7 +90,7 @@ namespace Nyon::ECS
                 for (size_t i = 0; i < vertices.size(); ++i) {
                     size_t next = (i + 1) % vertices.size();
                     Math::Vector2 edge = vertices[next] - vertices[i];
-                    Math::Vector2 normal = {-edge.y, edge.x}; // Perpendicular CCW
+                    Math::Vector2 normal = {edge.y, -edge.x}; // Perpendicular CW for outward normal in Y-up CCW polygon
                     float length = sqrt(normal.x * normal.x + normal.y * normal.y);
                     if (length > 0.0001f) {
                         normal = normal * (1.0f / length);
@@ -325,8 +325,16 @@ namespace Nyon::ECS
                 case ShapeType::Capsule:
                 {
                     const auto& capsule = GetCapsule();
-                    Math::Vector2 center1 = capsule.center1 + position;
-                    Math::Vector2 center2 = capsule.center2 + position;
+                    
+                    // Apply rotation to capsule endpoints
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto rotate2D = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+                    
+                    Math::Vector2 center1 = rotate2D(capsule.center1) + position;
+                    Math::Vector2 center2 = rotate2D(capsule.center2) + position;
                     
                     Math::Vector2 min = {
                         std::min(center1.x, center2.x) - capsule.radius,
@@ -345,8 +353,16 @@ namespace Nyon::ECS
                 case ShapeType::Segment:
                 {
                     const auto& segment = GetSegment();
-                    Math::Vector2 p1 = segment.point1 + position;
-                    Math::Vector2 p2 = segment.point2 + position;
+                    
+                    // Apply rotation to segment endpoints
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto rotate2D = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+                    
+                    Math::Vector2 p1 = rotate2D(segment.point1) + position;
+                    Math::Vector2 p2 = rotate2D(segment.point2) + position;
                     
                     outMin = {
                         std::min(p1.x, p2.x) - segment.radius,
@@ -405,6 +421,70 @@ namespace Nyon::ECS
             }
         }
         
+        // Approximate moment of inertia about the local origin for a unit-density body.
+        // The caller should multiply by actual mass if needed.
+        float CalculateInertiaForUnitDensity() const
+        {
+            switch (type)
+            {
+                case ShapeType::Circle:
+                {
+                    const auto& circle = GetCircle();
+                    // I/m = r²/2 for solid disk (per-unit-mass inertia)
+                    // Caller multiplies by mass to get actual inertia: I = m * (r²/2)
+                    return 0.5f * circle.radius * circle.radius;
+                }
+                
+                case ShapeType::Polygon:
+                {
+                    // Correct polygon inertia using shoelace-based formula
+                    const auto& polygon = GetPolygon();
+                    if (polygon.vertices.size() < 3) return 0.0f;
+                    
+                    const auto& verts = polygon.vertices;
+                    size_t n = verts.size();
+                    float numerator = 0.0f;
+                    float twoArea = 0.0f;
+                    
+                    for (size_t i = 0; i < n; ++i) {
+                        const Math::Vector2& p0 = verts[i];
+                        const Math::Vector2& p1 = verts[(i + 1) % n];
+                        float cross = std::abs(Math::Vector2::Cross(p0, p1));
+                        
+                        // Accumulate terms for moment of inertia
+                        numerator += cross * (
+                            p0.x * p0.x + p0.x * p1.x + p1.x * p1.x +
+                            p0.y * p0.y + p0.y * p1.y + p1.y * p1.y
+                        );
+                        
+                        // Accumulate 2 * area
+                        twoArea += cross;
+                    }
+                    
+                    // I = (density * area * numerator) / (6 * 2*area) = density * numerator / 12
+                    // For unit density: I = numerator / 12
+                    return numerator / 12.0f;
+                }
+                
+                case ShapeType::Capsule:
+                {
+                    const auto& capsule = GetCapsule();
+                    Math::Vector2 diff = capsule.center2 - capsule.center1;
+                    float h = std::sqrt(diff.x * diff.x + diff.y * diff.y);
+                    float r = capsule.radius;
+                    // Rough approximation: treat as rectangle (2r x h) plus two circles.
+                    float rectArea = 2.0f * r * h;
+                    float rectInertia = rectArea * (h * h + (2.0f * r) * (2.0f * r)) / 12.0f;
+                    float circleArea = 3.14159f * r * r;
+                    float circleInertia = 0.5f * 3.14159f * r * r * r * r * 2.0f; // two circles
+                    return rectInertia + circleInertia;
+                }
+                
+                default:
+                    return 0.0f;
+            }
+        }
+        
         float CalculateMass(float densityOverride = -1.0f) const
         {
             float actualDensity = (densityOverride > 0.0f) ? densityOverride : material.density;
@@ -418,13 +498,8 @@ namespace Nyon::ECS
         void SetFilter(const Filter& newFilter) { filter = newFilter; }
         Filter GetFilter() const { return filter; }
         
-        // Backwards compatibility methods
+        // Backwards compatibility method - DEPRECATED, use CalculateAABB(position, rotation, min, max) instead
         void GetBounds(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
-        {
-            CalculateAABB(position, 0.0f, outMin, outMax);
-        }
-        
-        void CalculateAABB(const Math::Vector2& position, Math::Vector2& outMin, Math::Vector2& outMax) const
         {
             CalculateAABB(position, 0.0f, outMin, outMax);
         }

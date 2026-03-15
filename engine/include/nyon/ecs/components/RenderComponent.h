@@ -13,9 +13,17 @@ namespace Nyon::ECS
      */
     struct RenderComponent
     {
+        enum class ShapeType
+        {
+            Rectangle = 0,
+            Circle = 1,
+            Polygon = 2
+        };
+        
         Math::Vector2 size = {32.0f, 32.0f};    // Visual size
         Math::Vector3 color = {1.0f, 1.0f, 1.0f}; // Render color
-        Math::Vector2 origin = {0.0f, 0.0f};    // Origin point for rendering
+        Math::Vector2 origin = {16.0f, 16.0f};  // Origin point for rendering (default center for 32x32)
+        ShapeType shapeType = ShapeType::Rectangle; // Shape type for rendering
         std::string texturePath = "";           // Texture file path (empty = solid color)
         bool visible = true;                    // Whether to render this entity
         int layer = 0;                          // Render layer (higher = front)
@@ -26,5 +34,9 @@ namespace Nyon::ECS
             : size(sz), color(col) {}
         RenderComponent(const Math::Vector2& sz, const Math::Vector3& col, const std::string& tex)
             : size(sz), color(col), texturePath(tex) {}
+        
+        // Constructor with shape type
+        RenderComponent(const Math::Vector2& sz, const Math::Vector3& col, ShapeType shape)
+            : size(sz), color(col), shapeType(shape) {}
     };
 }

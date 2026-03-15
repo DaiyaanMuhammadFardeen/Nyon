@@ -1,0 +1,42 @@
+name: Strip Comments and Sync
+on:
+  push:
+    branches:
+      - Testing  # Trigger whenever you push to main
+
+
+jobs:
+  clean-and-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Process Files
+        run: |
+          # 1. Remove Doxygen and multi-line blocks (/* ... */)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/\/\*.*?\*\///gs' {} +
+          
+          # 2. Remove single-line comments (// ...)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -pi -e 's/\/\/.*/ /g' {} +
+          
+          # 3. Pull ALL opening braces { up to the previous line
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/([^\s])\s*\n\s*\{/$1 {/g' {} +
+
+          # 4. Pull ALL closing braces } up to the previous line (Optional, based on your first Vim request)
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec perl -0777 -pi -e 's/\n\s*\}/ \}/g' {} +
+          
+          # 5. Final pass: Delete all empty lines and trim whitespace
+          find . -type f \( -name "*.cpp" -o -name "*.h" \) -exec sed -i '/^[[:space:]]*$/d' {} +
+
+      - name: Push to Clean Branch
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git checkout -B Clean
+          git add .
+          git commit -m "Auto-strip comments from main" || echo "No changes to commit"
+          git push origin Clean --force

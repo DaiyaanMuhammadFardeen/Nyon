@@ -26,7 +26,7 @@ namespace Nyon::ECS
         // === MASS PROPERTIES ===
         float mass = 1.0f;                          // Mass of the body (0 = infinite mass/static)
         float inverseMass = 1.0f;                   // 1/mass (cached for performance)
-        float inertia = 1.0f;                       // Moment of inertia
+        float inertia = 1.0f;                       // Moment of inertia (default to 1 for stability)
         float inverseInertia = 1.0f;                // 1/inertia (cached for performance)
         Math::Vector2 centerOfMass = {0.0f, 0.0f};  // Local center of mass
         
@@ -51,9 +51,9 @@ namespace Nyon::ECS
         bool isAwake = true;                        // Active simulation state
         bool allowSleep = true;                     // Whether body can fall asleep
         float sleepTimer = 0.0f;                    // Time accumulated while stationary
-        static constexpr float SLEEP_THRESHOLD = 0.5f; // Seconds of inactivity to sleep
-        static constexpr float LINEAR_SLEEP_TOLERANCE = 0.01f; // Velocity threshold for sleep
-        static constexpr float ANGULAR_SLEEP_TOLERANCE = 0.01f; // Angular vel threshold for sleep
+        static constexpr float TIME_TO_SLEEP = 0.5f;           // Seconds of inactivity to sleep
+        static constexpr float LINEAR_SLEEP_TOLERANCE = 0.01f; // Velocity threshold for sleep (pixels/sec)
+        static constexpr float ANGULAR_SLEEP_TOLERANCE = 0.01f; // Angular vel threshold for sleep (rad/sec)
         
         // === BACKWARD COMPATIBILITY ===
         bool isGrounded = false;                    // Legacy grounded state
@@ -79,23 +79,43 @@ namespace Nyon::ECS
             UpdateMassProperties();
         }
         
+        // Set inertia directly (called when computing from collider shape)
+        void SetInertia(float newInertia)
+        {
+            inertia = newInertia;
+            inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
+        }
+        
+        // For now this only handles body type flags and scalar mass.
+        // Shape-specific inertia is supplied when the collider is initialized.
         void UpdateMassProperties()
         {
-            if (isStatic || mass <= 0.0f)
+            // Static and kinematic bodies have infinite mass in the solver
+            if (isStatic || isKinematic || mass <= 0.0f)
             {
-                mass = 0.0f;
+                // Preserve mass value for when body becomes dynamic again
                 inverseMass = 0.0f;
-                inertia = 0.0f;
-                inverseInertia = 0.0f;
+                // Preserve inertia value for when body becomes dynamic again
+                if (inertia > 0.0f)
+                {
+                    inverseInertia = 0.0f;
+                }
             }
             else
             {
                 inverseMass = 1.0f / mass;
-                // Correct rectangle inertia: I = m * (w² + h²) / 12
-                // This will be updated properly when we have shape information
-                // For now, use a more reasonable approximation based on typical sizes
-                inertia = mass * 0.0833f; // 1/12 approximation for typical rectangles
-                inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
+                // Inertia is expected to be set from shape info; keep any existing value
+                if (inertia > 0.0f)
+                {
+                    inverseInertia = 1.0f / inertia;
+                }
+                else
+                {
+                    // Fallback: treat as point mass (no rotation resistance)
+                    // This is physically valid but unusual - user should set proper inertia
+                    inertia = 0.0f;
+                    inverseInertia = 0.0f;
+                }
             }
         }
         
@@ -183,8 +203,10 @@ namespace Nyon::ECS
         }
         
         // === UTILITY METHODS ===
+        bool IsStatic() const { return isStatic; }
+        bool IsKinematic() const { return isKinematic; }
         bool IsDynamic() const { return !isStatic && !isKinematic; }
-        bool ShouldCollide() const { return isAwake || isKinematic; }
+        bool ShouldCollide() const { return true; }  // All bodies participate in collision detection
         float GetMass() const { return mass; }
         float GetInertia() const { return inertia; }
     };

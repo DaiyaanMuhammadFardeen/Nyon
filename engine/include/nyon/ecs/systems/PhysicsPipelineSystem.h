@@ -29,6 +29,7 @@ namespace Nyon::ECS
     public:
         void Update(float deltaTime) override;
         void Initialize(EntityManager& entityManager, ComponentStore& componentStore) override;
+        virtual ~PhysicsPipelineSystem() = default;
         
         // Pipeline configuration
         struct Config
@@ -36,8 +37,8 @@ namespace Nyon::ECS
             int velocityIterations = 8;      // Number of velocity constraint iterations
             int positionIterations = 3;      // Number of position constraint iterations
             float baumgarte = 0.2f;          // Baumgarte stabilization factor
-            float linearSlop = 0.005f;       // Linear slop for position correction
-            float maxLinearCorrection = 0.2f; // Maximum linear position correction
+            float linearSlop = 0.5f;         // Linear slop for position correction (half a pixel for pixel-unit worlds)
+            float maxLinearCorrection = 20.0f; // Maximum linear position correction (increased from 0.2 to handle pixel-scale penetrations up to ~20px per frame)
             bool warmStarting = true;        // Enable warm starting of constraints
             bool useIslandSleeping = true;   // Enable island-based sleeping optimization
         };
@@ -71,6 +72,7 @@ namespace Nyon::ECS
             float normalMass;                // Normal constraint mass
             float tangentMass;               // Tangent constraint mass
             float velocityBias;              // Velocity bias for restitution
+            uint32_t featureId;              // Feature identifier for persistence
         };
         
         struct ContactManifold
@@ -93,19 +95,6 @@ namespace Nyon::ECS
             float restitution;                              // Combined restitution
             float invMassA, invMassB;                       // Inverse masses
             float invIA, invIB;                             // Inverse inertias
-        };
-        
-        struct PositionConstraint
-        {
-            Math::Vector2 localPoints[2];                   // Contact points in local coordinates
-            Math::Vector2 localNormal;                      // Normal in local coordinates
-            Math::Vector2 localPoint;                       // Reference point in local coordinates
-            uint32_t indexA;                                // Body A index
-            uint32_t indexB;                                // Body B index
-            float invMassA, invMassB;                       // Inverse masses
-            float localCenterA, localCenterB;               // Local centers of mass
-            float invIA, invIB;                             // Inverse inertias
-            int pointCount;                                 // Number of contact points
         };
         
         // Solver body structure
@@ -156,6 +145,9 @@ namespace Nyon::ECS
         Math::Vector2 ComputeClosestPoint(const Math::Vector2& point, 
                                         const Math::Vector2& min, const Math::Vector2& max);
         
+        // Impulse caching
+        uint64_t MakeImpulseCacheKey(uint32_t entityIdA, uint32_t entityIdB, uint32_t featureId) const;
+        
         // Constraint solving helpers
         void InitializeVelocityConstraints();
         void SolveVelocityConstraints();
@@ -171,7 +163,7 @@ namespace Nyon::ECS
         
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
-        PhysicsWorldComponent* m_PhysicsWorld = nullptr;
+        EntityID m_PhysicsWorldEntity = INVALID_ENTITY;
         
         // Pipeline data
         Config m_Config;
@@ -187,6 +179,14 @@ namespace Nyon::ECS
         std::unordered_map<uint64_t, size_t> m_ContactMap; // entityId pair -> manifold index
         std::vector<bool> m_ContactPersisted; // Tracks which contacts persisted
         
+        // Impulse cache for warm starting (keyed by entity pair + feature ID)
+        struct ImpulseData
+        {
+            float normalImpulse = 0.0f;
+            float tangentImpulse = 0.0f;
+        };
+        std::unordered_map<uint64_t, ImpulseData> m_ImpulseCache;
+        
         // Island management
         std::unique_ptr<Physics::IslandManager> m_IslandManager;
         std::vector<uint32_t> m_ActiveEntities;
@@ -195,7 +195,6 @@ namespace Nyon::ECS
         std::vector<SolverBody> m_SolverBodies;
         std::unordered_map<uint32_t, size_t> m_EntityToSolverIndex;
         std::vector<VelocityConstraint> m_VelocityConstraints;
-        std::vector<PositionConstraint> m_PositionConstraints;
         
         // Timing
         float m_Accumulator = 0.0f;

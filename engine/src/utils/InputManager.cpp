@@ -24,20 +24,9 @@ namespace Nyon::Utils
             glfwSetKeyCallback(window, KeyCallback);
             glfwSetMouseButtonCallback(window, MouseButtonCallback);
             
-            // Initialize active sets with currently pressed keys
-            for (int i = 0; i < GLFW_KEY_LAST; ++i) {
-                if (glfwGetKey(window, i) == GLFW_PRESS) {
-                    s_ActiveKeys.insert(i);
-                    s_CurrentKeys[i] = true;
-                }
-            }
-            
-            for (int i = 0; i < GLFW_MOUSE_BUTTON_LAST; ++i) {
-                if (glfwGetMouseButton(window, i) == GLFW_PRESS) {
-                    s_ActiveMouseButtons.insert(i);
-                    s_CurrentMouseButtons[i] = true;
-                }
-            }
+            // Initial state is all keys/buttons released
+            // GLFW callbacks will fire for any key that is down at window focus time
+            // No need to poll - polling with invalid key codes can crash on Wayland backends
         }
     }
     
@@ -77,15 +66,13 @@ namespace Nyon::Utils
             return;
         }
         
-        // Only update state if input has changed (callback triggered)
-        if (s_InputDirty) {
-            // Copy current state to previous state
-            memcpy(s_PreviousKeys, s_CurrentKeys, sizeof(s_CurrentKeys));
-            memcpy(s_PreviousMouseButtons, s_CurrentMouseButtons, sizeof(s_CurrentMouseButtons));
-            
-            // Reset dirty flag
-            s_InputDirty = false;
-        }
+        // Always copy previous state at the start of each frame
+        // This ensures consistent key state transitions regardless of event timing
+        memcpy(s_PreviousKeys, s_CurrentKeys, sizeof(s_CurrentKeys));
+        memcpy(s_PreviousMouseButtons, s_CurrentMouseButtons, sizeof(s_CurrentMouseButtons));
+        
+        // Reset dirty flag after copying
+        s_InputDirty = false;
         
         // Mouse position is still polled every frame as it can change without button events
         // This is acceptable since it's a single call vs 348 key checks
@@ -112,9 +99,9 @@ namespace Nyon::Utils
         if (key < 0 || key >= GLFW_KEY_LAST) {
             return false;
         }
-        // When no window is available, treat all keys as up
+        // When no window is available, treat all keys as up (consistent with other methods)
         if (s_Window == nullptr) {
-            return true;
+            return false;  // Changed from true to false for consistency
         }
         return !s_CurrentKeys[key];
     }

@@ -10,7 +10,6 @@ namespace Nyon::Math
 
         Vector2() : x(0.0f), y(0.0f) {}
         Vector2(float x, float y) : x(x), y(y) {}
-        Vector2(float x, float y, float z) : x(x), y(y) {} // For compatibility with color vectors
 
         // Basic operations
         Vector2 operator+(const Vector2& other) const { return Vector2(x + other.x, y + other.y); }
@@ -27,9 +26,9 @@ namespace Nyon::Math
         // Setter method
         void Set(float newX, float newY) { x = newX; y = newY; }
 
-        float Length() const { return sqrt(x * x + y * y); }
-        float LengthSquared() const { return x * x + y * y; }
-        Vector2 Normalize() const 
+        [[nodiscard]] float Length() const { return std::sqrt(x * x + y * y); }
+        [[nodiscard]] float LengthSquared() const { return x * x + y * y; }
+        [[nodiscard]] Vector2 Normalize() const 
         { 
             float len = Length();
             if (len > 0.0f) return Vector2(x / len, y / len);
@@ -37,28 +36,62 @@ namespace Nyon::Math
         }
         
         // Static utility functions
-        static float Dot(const Vector2& a, const Vector2& b)
+        [[nodiscard]] static float Dot(const Vector2& a, const Vector2& b)
         {
             return a.x * b.x + a.y * b.y;
         }
 
         // 2D cross product helpers (matching Box2D-style utilities)
         // Scalar result: cross(a, b) = a.x * b.y - a.y * b.x
-        static float Cross(const Vector2& a, const Vector2& b)
+        [[nodiscard]] static float Cross(const Vector2& a, const Vector2& b)
         {
             return a.x * b.y - a.y * b.x;
         }
 
         // Vector result: cross(s, v) = s × v = ( -s * v.y, s * v.x )
-        static Vector2 Cross(float s, const Vector2& v)
+        [[nodiscard]] static Vector2 Cross(float s, const Vector2& v)
         {
             return Vector2(-s * v.y, s * v.x);
         }
 
         // Vector result: cross(v, s) = v × s = (  s * v.y, -s * v.x )
-        static Vector2 Cross(const Vector2& v, float s)
+        [[nodiscard]] static Vector2 Cross(const Vector2& v, float s)
         {
             return Vector2(s * v.y, -s * v.x);
+        }
+        
+        // Distance squared between two points (avoids expensive sqrt)
+        [[nodiscard]] static float DistanceSquared(const Vector2& a, const Vector2& b)
+        {
+            float dx = a.x - b.x;
+            float dy = a.y - b.y;
+            return dx * dx + dy * dy;
+        }
+    };
+    
+    /**
+     * @brief 2D rotation matrix represented by cosine and sine
+     * 
+     * Efficient representation storing only cos and sin values.
+     * Used for rotating vectors and transforming between local/world space.
+     */
+    struct Rotation2D
+    {
+        float c, s; // cos(angle), sin(angle)
+        
+        Rotation2D() : c(1.0f), s(0.0f) {}
+        explicit Rotation2D(float angle) : c(std::cos(angle)), s(std::sin(angle)) {}
+        Rotation2D(float cos_val, float sin_val) : c(cos_val), s(sin_val) {}
+        
+        [[nodiscard]] Vector2 operator*(const Vector2& v) const
+        {
+            return {c * v.x - s * v.y, s * v.x + c * v.y};
+        }
+        
+        [[nodiscard]] Rotation2D Inverse() const
+        {
+            // For rotation matrices: transpose = inverse
+            return {c, -s};
         }
     };
 }

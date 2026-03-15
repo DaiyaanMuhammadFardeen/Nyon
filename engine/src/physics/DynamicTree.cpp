@@ -2,6 +2,7 @@
 #include <limits>
 #include <algorithm>
 #include <cassert>
+#include <unordered_set>
 
 namespace Nyon::Physics
 {
@@ -482,24 +483,19 @@ namespace Nyon::Physics
         std::vector<uint32_t> proxies;
         proxies.reserve(m_proxyCount);
         
-        // Collect all proxies
-        // Check if node is allocated (not in free list) by checking parent against free list
+        // Build a set of free node indices for O(1) lookup
+        std::unordered_set<uint32_t> freeSet;
+        uint32_t f = m_freeList;
+        while (f != TreeNode::NULL_NODE)
+        {
+            freeSet.insert(f);
+            f = m_nodes[f].parent;
+        }
+        
+        // Collect all proxies (nodes that are not in free list and are leaves)
         for (uint32_t i = 0; i < m_nodes.size(); ++i)
         {
-            // Skip free nodes - they're part of the free list
-            bool isFreeNode = false;
-            uint32_t freeIndex = m_freeList;
-            while (freeIndex != TreeNode::NULL_NODE)
-            {
-                if (freeIndex == i)
-                {
-                    isFreeNode = true;
-                    break;
-                }
-                freeIndex = m_nodes[freeIndex].parent;
-            }
-            
-            if (!isFreeNode && m_nodes[i].IsLeaf())
+            if (freeSet.count(i) == 0 && m_nodes[i].IsLeaf())
             {
                 proxies.push_back(i);
             }
