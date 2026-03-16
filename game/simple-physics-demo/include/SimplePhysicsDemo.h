@@ -41,6 +41,9 @@ private:
     void HandlePlayerInput(float deltaTime);
     bool IsPlayerGrounded();
     void SpawnQuadAtMousePosition();
+    
+    // ---------- cleanup -----------------------------------------------------
+    void DespawnOutOfBoundsObjects();
 
     // ---------- runtime state -----------------------------------------------
 
@@ -66,9 +69,6 @@ private:
     // Accumulated simulation time (increments by FIXED_TIMESTEP each tick).
     float m_SimTime            { 0.0f  };
 
-    // How long the demo runs before closing automatically.
-    static constexpr float DEMO_DURATION_S { 60.0f };
-
     // Print box position to stderr every N seconds of sim time.
     static constexpr float LOG_INTERVAL_S  { 0.5f  };
     float m_NextLogTime                    { 0.0f  };
@@ -77,4 +77,7 @@ private:
     static constexpr float PLAYER_MOVE_SPEED = 300.0f;  // pixels per second
     static constexpr float PLAYER_JUMP_FORCE = 900.0f;  // impulse: 900/mass=450 pix/s vs 16 pix/step gravity
     static constexpr float GRAVITY_SCALE     = 980.0f;  // gravity in pixels/s²
+    
+    // Despawn configuration
+    static constexpr float DESPAWN_Y_THRESHOLD = -100.0f;  // pixels below screen bottom
 };

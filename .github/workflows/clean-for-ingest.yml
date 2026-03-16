@@ -2,7 +2,7 @@ name: Strip Comments and Sync
 on:
   push:
     branches:
-      - Testing  # Trigger whenever you push to main
+      - GPU-Migration  # Trigger whenever you push to a particular branch
 
 
 jobs:

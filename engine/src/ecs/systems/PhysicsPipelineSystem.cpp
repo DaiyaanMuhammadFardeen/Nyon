@@ -147,27 +147,33 @@ namespace Nyon::ECS
                 {
                     const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
 
-                    // Calculate mass from area and density
-                    float area = collider.CalculateArea();
-                    float density = collider.material.density;
-                    float calculatedMass = area * density;
-
-                    // Only update mass if it hasn't been explicitly set (i.e., still default 1.0)
-                    // or if the calculated mass is significantly different
-                    if (body.mass <= 0.0f || std::abs(body.mass - calculatedMass) > 0.01f)
+                    // Calculate mass from area and density ONLY if not explicitly set
+                    if (!body.massIsExplicit)
                     {
-                        body.SetMass(calculatedMass);
+                        float area = collider.CalculateArea();
+                        float density = collider.material.density;
+                        float calculatedMass = area * density;
+
+                        // Only update mass if it hasn't been explicitly set (i.e., still default 1.0)
+                        // or if the calculated mass is significantly different
+                        if (body.mass <= 0.0f || std::abs(body.mass - calculatedMass) > 0.01f)
+                        {
+                            body.SetMass(calculatedMass);
+                        }
                     }
 
-                    // Calculate and set inertia from shape geometry
-                    float unitInertia = collider.CalculateInertiaPerUnitMass();
-                    float calculatedInertia = unitInertia * calculatedMass;
-
-                    // Only update inertia if it hasn't been explicitly set (i.e., still default 1.0)
-                    // or if the calculated inertia is significantly different
-                    if (body.inertia <= 0.0f || std::abs(body.inertia - calculatedInertia) > 0.01f)
+                    // Calculate and set inertia from shape geometry ONLY if not explicitly set
+                    if (!body.inertiaIsExplicit)
                     {
-                        body.SetInertia(calculatedInertia);
+                        float unitInertia = collider.CalculateInertiaPerUnitMass();
+                        float calculatedInertia = unitInertia * body.mass;
+
+                        // Only update inertia if it hasn't been explicitly set (i.e., still default 1.0)
+                        // or if the calculated inertia is significantly different
+                        if (body.inertia <= 0.0f || std::abs(body.inertia - calculatedInertia) > 0.01f)
+                        {
+                            body.SetInertia(calculatedInertia);
+                        }
                     }
                 }
 
@@ -196,6 +202,10 @@ namespace Nyon::ECS
                 // Initialize forces from ECS component (user-applied forces, gravity, etc.)
                 solverBody.force = body.force;
                 solverBody.torque = body.torque;
+
+                // Copy damping coefficients from physics body
+                solverBody.linearDamping = body.drag;           // Use existing drag field
+                solverBody.angularDamping = body.angularDamping; // Use existing angularDamping field
 
                 // Enforce motion locks early in the solver so collisions do not cause unwanted rotation.
                 // This keeps the body stable when lockRotation is enabled (e.g., player character).
@@ -1017,19 +1027,23 @@ namespace Nyon::ECS
                     {
                         // Both dynamic - move both apart
                         bodyA.position -= P * constraint.invMassA;
+                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);  // Angular correction
                         bodyB.position += P * constraint.invMassB;
+                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);  // Angular correction
                         correctionsApplied++;
                     }
                     else if (!bodyA.isStatic)
                     {
                         // B is static - only move A away from B
                         bodyA.position -= P * constraint.invMassA;
+                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);  // Angular correction
                         correctionsApplied++;
                     }
                     else if (!bodyB.isStatic)
                     {
                         // A is static - only move B away from A
                         bodyB.position += P * constraint.invMassB;
+                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);  // Angular correction
                         correctionsApplied++;
                     }
                     // If both are static, don't move anything (shouldn't happen)
@@ -1059,17 +1073,25 @@ namespace Nyon::ECS
             // Integrate linear velocity
             body.velocity += (body.force * body.invMass) * dt;
 
-            // Clamp velocity to prevent excessive tunneling
+            // Integrate angular velocity
+            body.angularVelocity += (body.torque * body.invInertia) * dt;
+
+            // Apply damping — exponential decay for numerical stability
+            if (body.linearDamping > 0.0f)
+            {
+                body.velocity *= std::pow(1.0f - body.linearDamping, dt);
+            }
+            if (body.angularDamping > 0.0f)
+            {
+                body.angularVelocity *= std::pow(1.0f - body.angularDamping, dt);
+            }
+
+            // Clamp velocities to prevent excessive tunneling
             float speed = body.velocity.Length();
             if (speed > maxLinearSpeed && speed > 0.0f)
             {
                 body.velocity = body.velocity * (maxLinearSpeed / speed);
             }
-
-            // Integrate angular velocity
-            body.angularVelocity += (body.torque * body.invInertia) * dt;
-
-            // Clamp angular velocity
             body.angularVelocity = std::clamp(body.angularVelocity, -maxAngularSpeed, maxAngularSpeed);
 
             // Clear forces for next step

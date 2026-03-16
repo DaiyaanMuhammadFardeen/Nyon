@@ -114,6 +114,8 @@ namespace Nyon::ECS
             bool isStatic;                                  // Whether body is static
             bool isAwake;                                   // Whether body is awake
             ECS::EntityID entityId;                         // Associated entity ID
+            float linearDamping;                            // Linear damping coefficient (from drag)
+            float angularDamping;                           // Angular damping coefficient
         };
         
         // Pipeline phases

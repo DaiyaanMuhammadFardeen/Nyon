@@ -29,6 +29,8 @@ namespace Nyon::ECS
         float inertia = 1.0f;                       // Moment of inertia (default to 1 for stability)
         float inverseInertia = 1.0f;                // 1/inertia (cached for performance)
         Math::Vector2 centerOfMass = {0.0f, 0.0f};  // Local center of mass
+        bool massIsExplicit = false;                // true when mass is user-set; skip auto-calculation
+        bool inertiaIsExplicit = false;             // true when inertia is user-set; skip auto-calculation
         
         // === MATERIAL PROPERTIES ===
         float friction = 0.1f;                      // Friction coefficient (0-1)
@@ -76,6 +78,7 @@ namespace Nyon::ECS
         void SetMass(float newMass)
         {
             mass = newMass;
+            massIsExplicit = true;  // mark as user-controlled
             UpdateMassProperties();
         }
         
@@ -83,6 +86,7 @@ namespace Nyon::ECS
         void SetInertia(float newInertia)
         {
             inertia = newInertia;
+            inertiaIsExplicit = true;  // mark as user-controlled
             inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
         }
         
