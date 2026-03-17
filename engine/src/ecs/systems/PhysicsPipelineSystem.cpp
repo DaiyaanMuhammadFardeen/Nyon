@@ -344,23 +344,7 @@ namespace Nyon::ECS
                     // Also populate the world component for island manager and debug rendering
                     if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
                         auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
-                        ECS::ContactManifold worldManifold;
-                        worldManifold.entityIdA = manifold.entityIdA;
-                        worldManifold.entityIdB = manifold.entityIdB;
-                        worldManifold.normal = manifold.normal;
-                        worldManifold.touching = true;
-
-                        for (const auto& pt : manifold.points) {
-                            ECS::ContactPoint cp;
-                            cp.position = pt.position;
-                            cp.normal = pt.normal;
-                            cp.separation = pt.separation;
-                            cp.normalImpulse = pt.normalImpulse;
-                            cp.tangentImpulse = pt.tangentImpulse;
-                            worldManifold.points.push_back(std::move(cp));
-                        }
-
-                        world.contactManifolds.push_back(std::move(worldManifold));
+                        world.contactManifolds.push_back(manifold); // Direct copy since types are identical
                     }
                 }
                 else
@@ -396,7 +380,23 @@ namespace Nyon::ECS
             VelocityConstraint vc;
             vc.normal = manifold.normal;
             vc.tangent = Math::Vector2{-manifold.normal.y, manifold.normal.x};
-            vc.points = manifold.points;
+            
+            // Convert ECS::ContactPoint to ContactPointConstraint (solver-only data)
+            vc.points.reserve(manifold.points.size());
+            for (const auto& ecsPoint : manifold.points)
+            {
+                ContactPointConstraint constraintPoint;
+                constraintPoint.position = ecsPoint.position;
+                constraintPoint.normal = ecsPoint.normal;
+                constraintPoint.separation = ecsPoint.separation;
+                constraintPoint.normalImpulse = ecsPoint.normalImpulse;
+                constraintPoint.tangentImpulse = ecsPoint.tangentImpulse;
+                constraintPoint.normalMass = ecsPoint.normalMass;
+                constraintPoint.tangentMass = ecsPoint.tangentMass;
+                constraintPoint.velocityBias = ecsPoint.velocityBias;
+                constraintPoint.featureId = ecsPoint.featureId;
+                vc.points.push_back(constraintPoint);
+            }
 
             // Get solver indices
             auto itA = m_EntityToSolverIndex.find(manifold.entityIdA);
@@ -803,9 +803,9 @@ namespace Nyon::ECS
         return !(minA.x >= maxB.x || maxA.x <= minB.x || minA.y >= maxB.y || maxA.y <= minB.y);
     }
 
-    PhysicsPipelineSystem::ContactManifold PhysicsPipelineSystem::GenerateManifold(uint32_t entityIdA, uint32_t entityIdB)
+    ECS::ContactManifold PhysicsPipelineSystem::GenerateManifold(uint32_t entityIdA, uint32_t entityIdB)
     {
-        ContactManifold manifold;
+        ECS::ContactManifold manifold;
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
 
@@ -822,7 +822,7 @@ namespace Nyon::ECS
         const auto& transformA = m_ComponentStore->GetComponent<TransformComponent>(entityIdA);
         const auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(entityIdB);
 
-        // Use proper ManifoldGenerator for accurate contact generation
+        // ManifoldGenerator now returns the canonical ECS::ContactManifold directly
         // Get first shape from each entity (assuming single-shape entities)
         uint32_t shapeIdA = 0;
         uint32_t shapeIdB = 0;
@@ -834,25 +834,7 @@ namespace Nyon::ECS
                 transformA, transformB
                 );
 
-        // Convert to internal ContactManifold format
-        manifold.points.reserve(generatedManifold.points.size());
-        manifold.normal = generatedManifold.normal;
-
-        for (size_t i = 0; i < generatedManifold.points.size(); ++i)
-        {
-            const auto& point = generatedManifold.points[i];
-            ContactPoint contactPoint;
-            contactPoint.position = point.position;
-            contactPoint.normal = point.normal;
-            contactPoint.separation = point.separation;
-            contactPoint.normalImpulse = 0.0f;
-            contactPoint.tangentImpulse = 0.0f;
-            // Use feature ID from ECS manifold if available, otherwise generate from point index
-            contactPoint.featureId = point.featureId != 0 ? point.featureId : (i + 1);
-            manifold.points.push_back(contactPoint);
-        }
-
-        return manifold;
+        return generatedManifold;
     }
 
     void PhysicsPipelineSystem::WarmStartConstraints()
@@ -1262,13 +1244,13 @@ namespace Nyon::ECS
         }
 
         // Process collision pairs in parallel
-        std::vector<std::future<ContactManifold>> futures;
+        std::vector<std::future<ECS::ContactManifold>> futures;
         std::mutex manifoldsMutex;
 
         for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs)
         {
-            futures.push_back(Utils::ThreadPool::Instance().Submit([this, entityIdA, entityIdB]() -> ContactManifold {
-                ContactManifold manifold;
+            futures.push_back(Utils::ThreadPool::Instance().Submit([this, entityIdA, entityIdB]() -> ECS::ContactManifold {
+                ECS::ContactManifold manifold;
                 manifold.entityIdA = entityIdA;
                 manifold.entityIdB = entityIdB;
 
@@ -1284,7 +1266,7 @@ namespace Nyon::ECS
         // Collect results
         for (auto& future : futures)
         {
-            ContactManifold manifold = future.get();
+            ECS::ContactManifold manifold = future.get();
             if (!manifold.points.empty())
             {
                 std::lock_guard<std::mutex> lock(manifoldsMutex);
