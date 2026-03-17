@@ -48,14 +48,14 @@ namespace Nyon::ECS
         
         /**
          * @brief Get all currently active entity IDs.
-         * @return Vector of active entity IDs
+         * @return Unordered set of active entity IDs
          */
-        const std::vector<EntityID>& GetActiveEntities() const;
+        const std::unordered_set<EntityID>& GetActiveEntities() const;
         
     private:
         EntityID m_NextID;
         std::vector<bool> m_EntityStates;  // true = active, false = destroyed
-        std::vector<EntityID> m_ActiveEntities;
+        std::unordered_set<EntityID> m_ActiveEntities;
         std::vector<EntityID> m_FreeIDs;   // recycled IDs for reuse
     };
 }

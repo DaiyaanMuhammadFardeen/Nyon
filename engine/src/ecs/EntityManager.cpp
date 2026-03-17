@@ -1,5 +1,4 @@
 #include "nyon/ecs/EntityManager.h"
-#include <algorithm>
 
 namespace Nyon::ECS
 {
@@ -26,7 +25,7 @@ namespace Nyon::ECS
             m_EntityStates.push_back(true);
         }
         
-        m_ActiveEntities.push_back(id);
+        m_ActiveEntities.insert(id);
         return id;
     }
     
@@ -39,11 +38,8 @@ namespace Nyon::ECS
         
         m_EntityStates[entity] = false;
         
-        // Remove from active entities list
-        m_ActiveEntities.erase(
-            std::remove(m_ActiveEntities.begin(), m_ActiveEntities.end(), entity),
-            m_ActiveEntities.end()
-        );
+        // Remove from active entities list (O(1) with unordered_set)
+        m_ActiveEntities.erase(entity);
         
         // Add to free IDs for reuse
         m_FreeIDs.push_back(entity);
@@ -59,7 +55,7 @@ namespace Nyon::ECS
         return m_ActiveEntities.size();
     }
     
-    const std::vector<EntityID>& EntityManager::GetActiveEntities() const
+    const std::unordered_set<EntityID>& EntityManager::GetActiveEntities() const
     {
         return m_ActiveEntities;
     }
