@@ -7,6 +7,7 @@ add_subdirectory(engine)
 # add_subdirectory(game/simple-test)  # Simple physics test - disabled, use physics-demo instead
 add_subdirectory(game/simple-physics-demo)  # Simple falling box demo
 add_subdirectory(game/particle-collision-demo)  # Particle collision demo
+add_subdirectory(game/camera-demo)  # Camera system demo
 
 # Main project executable (optional - can be removed if not needed)
 # add_executable(nyon_main src/main.cpp)
