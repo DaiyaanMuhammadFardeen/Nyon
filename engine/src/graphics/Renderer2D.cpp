@@ -1356,8 +1356,8 @@ void Renderer2D::DrawSolidPolygon(const std::vector<Math::Vector2>& vertices,
         const Math::Vector2& v1 = vertices[i];
         const Math::Vector2& v2 = vertices[i + 1];
         s_Instance->PushPolyFillVert(v0.x, v0.y, cr, cg, cb);
-        s_Instance->PushPolyFillVert(v2.x, v2.y, cr, cg, cb);
         s_Instance->PushPolyFillVert(v1.x, v1.y, cr, cg, cb);
+        s_Instance->PushPolyFillVert(v2.x, v2.y, cr, cg, cb);
     }
 }
 

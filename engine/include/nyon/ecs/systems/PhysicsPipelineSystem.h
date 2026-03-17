@@ -135,8 +135,8 @@ namespace Nyon::ECS
         // Multi-threaded helpers
         void ParallelBroadPhase();
         void ParallelNarrowPhase();
-        void ParallelVelocitySolving();
-        void ParallelPositionSolving();
+        void ParallelVelocitySolving(float subStepDt);
+        void ParallelPositionSolving(float subStepDt);
         
         // Broad phase helpers
         struct BroadPhaseCallback : public Physics::ITreeQueryCallback

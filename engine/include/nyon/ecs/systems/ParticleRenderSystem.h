@@ -21,9 +21,13 @@ public:
     // Set the particles to render (called by the demo)
     void SetParticles(const std::vector<Nyon::Particle>& particles);
 
+    // Set view-projection matrix (called from ECSApplication)
+    void SetViewProjection(const glm::mat4& vp) { m_ViewProjection = vp; }
+
 private:
     std::unique_ptr<Graphics::ParticleRenderer> m_ParticleRenderer;
     std::vector<Nyon::Particle> m_Particles;
+    glm::mat4 m_ViewProjection;  // View-projection matrix for rendering
 };
 
 } // namespace ECS

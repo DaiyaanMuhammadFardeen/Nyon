@@ -106,8 +106,8 @@ namespace Nyon::ECS
             ConstraintInitialization();
             
             if (m_UseMultiThreading && m_VelocityConstraints.size() > 1) {
-                ParallelVelocitySolving();
-                ParallelPositionSolving();
+                ParallelVelocitySolving(subStepDt);
+                ParallelPositionSolving(subStepDt);
             } else {
                 VelocitySolving();
                 PositionSolving();
@@ -1299,7 +1299,7 @@ namespace Nyon::ECS
         m_Stats.narrowPhaseContacts = m_ContactManifolds.size();
     }
 
-    void PhysicsPipelineSystem::ParallelVelocitySolving()
+    void PhysicsPipelineSystem::ParallelVelocitySolving(float subStepDt)
     {
         // Apply gravity and integrate velocities (parallel)
         std::vector<std::future<void>> futures;
@@ -1312,7 +1312,7 @@ namespace Nyon::ECS
             
             if (start >= m_SolverBodies.size()) break;
 
-            futures.push_back(Utils::ThreadPool::Instance().Submit([this, start, end]() {
+            futures.push_back(Utils::ThreadPool::Instance().Submit([this, start, end, subStepDt]() {
                 for (size_t i = start; i < end; ++i)
                 {
                     auto& body = m_SolverBodies[i];
@@ -1323,7 +1323,7 @@ namespace Nyon::ECS
                         body.force += world.gravity * mass;
                     }
                 }
-                IntegrateVelocities(FIXED_TIMESTEP, start, end);
+                IntegrateVelocities(subStepDt, start, end);
             }));
         }
 
@@ -1345,9 +1345,9 @@ namespace Nyon::ECS
         }
     }
 
-    void PhysicsPipelineSystem::ParallelPositionSolving()
+    void PhysicsPipelineSystem::ParallelPositionSolving(float subStepDt)
     {
-        IntegratePositions(FIXED_TIMESTEP);
+        IntegratePositions(subStepDt);
 
         // Solve position constraints iteratively
         for (int i = 0; i < m_Config.positionIterations; ++i)

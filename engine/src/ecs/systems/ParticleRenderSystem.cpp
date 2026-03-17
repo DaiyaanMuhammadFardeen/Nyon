@@ -3,7 +3,8 @@
 
 namespace Nyon::ECS {
 
-ParticleRenderSystem::ParticleRenderSystem() {
+ParticleRenderSystem::ParticleRenderSystem() 
+    : m_ViewProjection(1.0f) {
     m_ParticleRenderer = std::make_unique<Graphics::ParticleRenderer>();
 }
 
@@ -26,9 +27,8 @@ void ParticleRenderSystem::Render(float alpha) {
         m_ParticleRenderer->SubmitCircle(p.x, p.y, p.radius, p.r, p.g, p.b);
     }
 
-    // Create view-projection matrix (assuming 1280x720 window)
-    glm::mat4 vp = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f, -1.0f, 1.0f);
-    m_ParticleRenderer->Flush(vp);
+    // Use the view-projection matrix set by ECSApplication
+    m_ParticleRenderer->Flush(m_ViewProjection);
 }
 
 void ParticleRenderSystem::SetParticles(const std::vector<Nyon::Particle>& particles) {
