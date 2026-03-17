@@ -29,7 +29,7 @@ namespace Nyon::ECS
             if (!m_EntityManager || !m_ComponentStore) return;
             
             // Clear screen with dark blue background
-            glClearColor(0.1f, 0.1f, 0.3f, 1.0f);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             
             Graphics::Renderer2D::BeginScene();

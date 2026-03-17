@@ -3,7 +3,9 @@
 #include "nyon/ecs/systems/RenderSystem.h"
 #include "nyon/ecs/systems/PhysicsPipelineSystem.h"
 #include "nyon/ecs/systems/DebugRenderSystem.h"
+#include "nyon/ecs/systems/ParticleRenderSystem.h"
 #include "nyon/utils/InputManager.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 
 // Debug logging macro - only output in debug builds
@@ -110,6 +112,12 @@ namespace Nyon
             if (m_DebugOverlayEnabled && m_DebugRenderSystem) {
                 m_DebugRenderSystem->SetInterpolationAlpha(alpha);
                 m_DebugRenderSystem->RenderDebugInfo();
+            }
+
+            // Render particles if particle render system exists
+            auto* particleSystem = m_SystemManager.GetSystem<ECS::ParticleRenderSystem>();
+            if (particleSystem) {
+                particleSystem->Render(alpha);
             }
         }
         

@@ -80,7 +80,7 @@ namespace Nyon::ECS
         // Default values approximate air resistance
         
         // === GLOBAL PARAMETERS ===
-        float restitutionThreshold = 100.0f;        // Velocity threshold for restitution
+        float restitutionThreshold = 1.0f;          // Velocity threshold for restitution (lower = less bounce)
         float maxLinearSpeed = 10000.0f;            // Maximum body linear speed
         float maxAngularSpeed = 100.0f;             // Maximum body angular speed (rad/sec)
         bool enableSleep = true;                    // Global sleep enable/disable

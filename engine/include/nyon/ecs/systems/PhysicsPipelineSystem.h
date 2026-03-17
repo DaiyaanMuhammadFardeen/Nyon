@@ -7,8 +7,11 @@
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/physics/Island.h"
 #include "nyon/physics/DynamicTree.h"
+#include "nyon/utils/ThreadPool.h"
 #include <vector>
 #include <unordered_map>
+#include <future>
+#include <atomic>
 
 namespace Nyon::ECS
 {
@@ -129,11 +132,18 @@ namespace Nyon::ECS
         void StoreImpulses();
         void UpdateSleeping();
         
+        // Multi-threaded helpers
+        void ParallelBroadPhase();
+        void ParallelNarrowPhase();
+        void ParallelVelocitySolving();
+        void ParallelPositionSolving();
+        
         // Broad phase helpers
         struct BroadPhaseCallback : public Physics::ITreeQueryCallback
         {
             PhysicsPipelineSystem* system;
             uint32_t entityId;
+            std::vector<std::pair<uint32_t, uint32_t>>* localPairs = nullptr;
             
             bool QueryCallback(uint32_t nodeId, uint32_t userData) override;
         };
@@ -156,6 +166,7 @@ namespace Nyon::ECS
         void SolvePositionConstraints();
         void WarmStartConstraints();
         void IntegrateVelocities(float dt);
+        void IntegrateVelocities(float dt, size_t start, size_t end);  // Parallel version
         void IntegratePositions(float dt);
         
         // Utility methods
@@ -204,5 +215,9 @@ namespace Nyon::ECS
         // Constants
         static constexpr float FIXED_TIMESTEP = 1.0f / 60.0f; // 60 FPS physics
         static constexpr float MAX_TIMESTEP = 0.25f;          // Maximum time step
+        
+        // Multi-threading
+        bool m_UseMultiThreading = true;
+        size_t m_NumThreads = 0;
     };
 }

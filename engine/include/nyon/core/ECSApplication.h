@@ -9,8 +9,8 @@
 namespace Nyon::ECS {
     class RenderSystem;
     class DebugRenderSystem;
+    class ParticleRenderSystem;
 }
-#include <memory>
 
 namespace Nyon
 {

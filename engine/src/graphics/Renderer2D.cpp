@@ -23,15 +23,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include <vector>
-#include <cstdio>
-#include <cmath>
-#include <algorithm>
-#include <cassert>
+#include <filesystem>
+#include <unistd.h>
+#include <limits.h>
 #include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <cstring>
 
 // GL 4.4 persistent map flags — define manually in case the glad header predates them
 #ifndef GL_MAP_PERSISTENT_BIT
@@ -46,19 +41,21 @@
 
 constexpr float PI = 3.14159265358979323846f;
 
-// Shader asset paths — adjust if your build puts assets elsewhere
-#define SHADER_DIR "engine/assets/shaders/"
-namespace ShaderPath {
-    constexpr const char* QUAD_VERT    = SHADER_DIR "quad.vert";
-    constexpr const char* QUAD_FRAG    = SHADER_DIR "quad.frag";
-    constexpr const char* CIRCLE_VERT  = SHADER_DIR "circle.vert";
-    constexpr const char* CIRCLE_FRAG  = SHADER_DIR "circle.frag";
-    constexpr const char* LINE_VERT    = SHADER_DIR "line.vert";
-    constexpr const char* LINE_FRAG    = SHADER_DIR "line.frag";
-    constexpr const char* CAPSULE_VERT = SHADER_DIR "capsule.vert";
-    constexpr const char* CAPSULE_FRAG = SHADER_DIR "capsule.frag";
-    constexpr const char* POLYGON_VERT = SHADER_DIR "polygon.vert";
-    constexpr const char* POLYGON_FRAG = SHADER_DIR "polygon.frag";
+// Get shader directory relative to executable
+std::string GetShaderDir() {
+    char exePath[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
+    if (len == -1) {
+        // Fallback: assume run from build/game/simple-physics-demo/
+        return "../../../engine/assets/shaders/";
+    }
+    exePath[len] = '\0';
+    std::filesystem::path exe(exePath);
+    // exe is .../build/game/simple-physics-demo/nyon_simple_physics_demo
+    // Go up to Nyon, then to engine/assets/shaders
+    auto nyonDir = exe.parent_path().parent_path().parent_path().parent_path(); // exe -> simple-physics-demo -> game -> build -> Nyon
+    auto shaderDir = nyonDir / "engine" / "assets" / "shaders";
+    return shaderDir.string() + "/";
 }
 
 namespace Nyon::Graphics {
@@ -67,8 +64,9 @@ namespace Nyon::Graphics {
 // Shader file loader
 // =============================================================================
 
-static std::string LoadShaderSource(const std::string& filepath)
+static std::string LoadShaderSource(const std::string& filename)
 {
+    std::string filepath = GetShaderDir() + filename;
     std::ifstream file(filepath, std::ios::in | std::ios::binary);
     if (!file.is_open())
         throw std::runtime_error("Renderer2D: failed to open shader: " + filepath);
@@ -450,8 +448,8 @@ struct Renderer2D::Impl
     void SetupQuadPipeline()
     {
         // --- Load shader ---
-        std::string vsSrc = LoadShaderSource(ShaderPath::QUAD_VERT);
-        std::string fsSrc = LoadShaderSource(ShaderPath::QUAD_FRAG);
+        std::string vsSrc = LoadShaderSource("quad.vert");
+        std::string fsSrc = LoadShaderSource("quad.frag");
         QuadShader = CreateProgram(vsSrc.c_str(), fsSrc.c_str());
         if (!QuadShader) return;
         QuadVP_Loc = glGetUniformLocation(QuadShader, "u_VP");
@@ -506,8 +504,8 @@ struct Renderer2D::Impl
     void SetupCirclePipeline()
     {
         // --- Load shader ---
-        std::string vsSrc = LoadShaderSource(ShaderPath::CIRCLE_VERT);
-        std::string fsSrc = LoadShaderSource(ShaderPath::CIRCLE_FRAG);
+        std::string vsSrc = LoadShaderSource("circle.vert");
+        std::string fsSrc = LoadShaderSource("circle.frag");
         CircleShader = CreateProgram(vsSrc.c_str(), fsSrc.c_str());
         if (!CircleShader) return;
         CircleVP_Loc = glGetUniformLocation(CircleShader, "u_VP");
@@ -566,8 +564,8 @@ struct Renderer2D::Impl
     void SetupLinePipeline()
     {
         // --- Load shader ---
-        std::string vsSrc = LoadShaderSource(ShaderPath::LINE_VERT);
-        std::string fsSrc = LoadShaderSource(ShaderPath::LINE_FRAG);
+        std::string vsSrc = LoadShaderSource("line.vert");
+        std::string fsSrc = LoadShaderSource("line.frag");
         LineShader = CreateProgram(vsSrc.c_str(), fsSrc.c_str());
         if (!LineShader) return;
         LineVP_Loc = glGetUniformLocation(LineShader, "u_VP");
@@ -626,8 +624,8 @@ struct Renderer2D::Impl
     void SetupCapsulePipeline()
     {
         // --- Load shader ---
-        std::string vsSrc = LoadShaderSource(ShaderPath::CAPSULE_VERT);
-        std::string fsSrc = LoadShaderSource(ShaderPath::CAPSULE_FRAG);
+        std::string vsSrc = LoadShaderSource("capsule.vert");
+        std::string fsSrc = LoadShaderSource("capsule.frag");
         CapsuleShader = CreateProgram(vsSrc.c_str(), fsSrc.c_str());
         if (!CapsuleShader) return;
         CapsuleVP_Loc = glGetUniformLocation(CapsuleShader, "u_VP");
@@ -715,8 +713,8 @@ struct Renderer2D::Impl
     void SetupPolygonPipeline()
     {
         // --- Load shader ---
-        std::string vsSrc = LoadShaderSource(ShaderPath::POLYGON_VERT);
-        std::string fsSrc = LoadShaderSource(ShaderPath::POLYGON_FRAG);
+        std::string vsSrc = LoadShaderSource("polygon.vert");
+        std::string fsSrc = LoadShaderSource("polygon.frag");
         PolyShader = CreateProgram(vsSrc.c_str(), fsSrc.c_str());
         if (!PolyShader) return;
         PolyVP_Loc = glGetUniformLocation(PolyShader, "u_VP");
@@ -889,6 +887,10 @@ void Renderer2D::Init()
 
     s_Instance->UpdateProjectionMatrix(1280.0f, 720.0f);
     s_Instance->Initialized = true;
+
+    // Debug: Print GPU info
+    printf("Renderer2D: Initialized successfully. GPU: %s, OpenGL: %s\n",
+           glGetString(GL_RENDERER), glGetString(GL_VERSION));
 }
 
 // =============================================================================

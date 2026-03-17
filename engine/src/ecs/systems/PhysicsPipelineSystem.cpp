@@ -3,6 +3,7 @@
 #include <chrono>
 #include <algorithm>
 #include <iostream>
+#include <mutex>
 
 namespace Nyon::ECS
 {
@@ -22,6 +23,11 @@ namespace Nyon::ECS
 
         // Initialize island manager
         m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
+        
+        // Initialize thread pool
+        Utils::ThreadPool::Initialize();
+        m_NumThreads = Utils::ThreadPool::Instance().GetThreadCount();
+        std::cerr << "[PHYSICS] Multi-threaded physics initialized with " << m_NumThreads << " threads\n";
     }
 
     void PhysicsPipelineSystem::Update(float deltaTime)
@@ -86,12 +92,27 @@ namespace Nyon::ECS
 
             // Execute pipeline phases for this sub-step
             PrepareBodiesForUpdate();
-            BroadPhaseDetection();
-            NarrowPhaseDetection();
+            
+            // Use multi-threaded pipeline if enabled and beneficial
+            if (m_UseMultiThreading && m_ActiveEntities.size() > 1) {
+                ParallelBroadPhase();
+                ParallelNarrowPhase();
+            } else {
+                BroadPhaseDetection();
+                NarrowPhaseDetection();
+            }
+            
             IslandDetection();
             ConstraintInitialization();
-            VelocitySolving();
-            PositionSolving();
+            
+            if (m_UseMultiThreading && m_VelocityConstraints.size() > 1) {
+                ParallelVelocitySolving();
+                ParallelPositionSolving();
+            } else {
+                VelocitySolving();
+                PositionSolving();
+            }
+            
             Integration();
             StoreImpulses();
             UpdateSleeping();
@@ -715,7 +736,11 @@ namespace Nyon::ECS
             // Check filter settings
             if (colliderA.filter.ShouldCollide(colliderB.filter))
             {
-                system->m_BroadPhasePairs.emplace_back(entityId, otherEntityId);
+                if (localPairs) {
+                    localPairs->emplace_back(entityId, otherEntityId);
+                } else {
+                    system->m_BroadPhasePairs.emplace_back(entityId, otherEntityId);
+                }
             }
         }
 
@@ -832,6 +857,10 @@ namespace Nyon::ECS
 
     void PhysicsPipelineSystem::WarmStartConstraints()
     {
+        // Warm starting with CLAMPED impulses to prevent explosions
+        // Only apply a fraction of the stored impulse to avoid instability
+        constexpr float WARM_START_FACTOR = 0.5f;  // Apply only 50% of stored impulse
+        
         for (auto& constraint : m_VelocityConstraints)
         {
             const auto& bodyA = m_SolverBodies[constraint.indexA];
@@ -854,9 +883,18 @@ namespace Nyon::ECS
 
             for (auto& point : constraint.points)
             {
-                // Apply previous impulses
-                Math::Vector2 P = point.normal * point.normalImpulse +
-                    constraint.tangent * point.tangentImpulse;
+                // Apply previous impulses WITH CLAMPING to prevent explosions
+                // Limit warm-start impulse to prevent energy injection
+                float clampedNormalImpulse = point.normalImpulse * WARM_START_FACTOR;
+                float clampedTangentImpulse = point.tangentImpulse * WARM_START_FACTOR;
+                
+                // Additional safety: clamp to reasonable maximum based on body mass
+                float maxImpulse = 100.0f;  // Prevent extreme impulses
+                clampedNormalImpulse = std::clamp(clampedNormalImpulse, -maxImpulse, maxImpulse);
+                clampedTangentImpulse = std::clamp(clampedTangentImpulse, -maxImpulse, maxImpulse);
+                
+                Math::Vector2 P = constraint.normal * clampedNormalImpulse +
+                    constraint.tangent * clampedTangentImpulse;
 
                 if (!bodyA.isStatic)
                 {
@@ -1055,6 +1093,11 @@ namespace Nyon::ECS
 
     void PhysicsPipelineSystem::IntegrateVelocities(float dt)
     {
+        IntegrateVelocities(dt, 0, m_SolverBodies.size());
+    }
+
+    void PhysicsPipelineSystem::IntegrateVelocities(float dt, size_t start, size_t end)
+    {
         // Respect global/world speed limits if available
         float maxLinearSpeed = std::numeric_limits<float>::infinity();
         float maxAngularSpeed = std::numeric_limits<float>::infinity();
@@ -1065,8 +1108,10 @@ namespace Nyon::ECS
             maxAngularSpeed = world.maxAngularSpeed;
         }
 
-        for (auto& body : m_SolverBodies)
+        for (size_t i = start; i < end; ++i)
         {
+            auto& body = m_SolverBodies[i];
+            
             if (body.isStatic || !body.isAwake)
                 continue;
 
@@ -1125,6 +1170,189 @@ namespace Nyon::ECS
         for (auto& manifold : m_ContactManifolds)
         {
             manifold.persisted = false;
+        }
+    }
+
+    // ========================================================================
+    // MULTI-THREADED PHYSICS PIPELINE
+    // ========================================================================
+
+    void PhysicsPipelineSystem::ParallelBroadPhase()
+    {
+        m_BroadPhasePairs.clear();
+
+        // DON'T clear m_ShapeProxyMap - we need to preserve proxy IDs across frames
+        // Only remove proxies for entities that no longer have colliders
+        std::vector<uint32_t> entitiesToRemove;
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
+        {
+            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId))
+            {
+                entitiesToRemove.push_back(entityId);
+            }
+        }
+
+        for (uint32_t entityId : entitiesToRemove)
+        {
+            uint32_t proxyId = m_ShapeProxyMap[entityId];
+            m_BroadPhaseTree.DestroyProxy(proxyId);
+            m_ShapeProxyMap.erase(entityId);
+        }
+
+        // Update broad phase tree and collect potential pairs
+        m_ComponentStore->ForEachComponent<ColliderComponent>([&](EntityID entityId, ColliderComponent& collider) {
+                if (!m_ComponentStore->HasComponent<TransformComponent>(entityId))
+                return;
+
+                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
+
+                // Update shape AABB in broad phase tree
+                UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation);
+                });
+
+        // Query the tree for overlapping proxies in parallel
+        std::vector<std::future<std::vector<std::pair<uint32_t, uint32_t>>>> futures;
+
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
+        {
+            // Only query for dynamic bodies
+            if (!m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId))
+                continue;
+
+            const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
+            if (body.isStatic)
+                continue;
+
+            // Submit query task to thread pool
+            futures.push_back(Utils::ThreadPool::Instance().Submit([this, entityId, proxyId]() -> std::vector<std::pair<uint32_t, uint32_t>> {
+                std::vector<std::pair<uint32_t, uint32_t>> localPairs;
+                const auto& fatAABB = m_BroadPhaseTree.GetFatAABB(proxyId);
+                
+                BroadPhaseCallback callback;
+                callback.system = this;
+                callback.entityId = entityId;
+                callback.localPairs = &localPairs;
+                
+                // Query will call QueryCallback which adds to localPairs
+                m_BroadPhaseTree.Query(fatAABB, &callback);
+                
+                return localPairs;
+            }));
+        }
+
+        // Collect results
+        for (auto& future : futures)
+        {
+            auto localPairs = future.get();
+            m_BroadPhasePairs.insert(m_BroadPhasePairs.end(), localPairs.begin(), localPairs.end());
+        }
+
+        m_Stats.broadPhasePairs = m_BroadPhasePairs.size();
+    }
+
+    void PhysicsPipelineSystem::ParallelNarrowPhase()
+    {
+        m_ContactManifolds.clear();
+        m_ContactMap.clear();
+
+        // Clear world contacts for this frame
+        if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
+            auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+            world.contactManifolds.clear();
+        }
+
+        // Process collision pairs in parallel
+        std::vector<std::future<ContactManifold>> futures;
+        std::mutex manifoldsMutex;
+
+        for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs)
+        {
+            futures.push_back(Utils::ThreadPool::Instance().Submit([this, entityIdA, entityIdB]() -> ContactManifold {
+                ContactManifold manifold;
+                manifold.entityIdA = entityIdA;
+                manifold.entityIdB = entityIdB;
+
+                if (!TestCollision(entityIdA, entityIdB))
+                {
+                    return manifold; // Empty manifold
+                }
+
+                return GenerateManifold(entityIdA, entityIdB);
+            }));
+        }
+
+        // Collect results
+        for (auto& future : futures)
+        {
+            ContactManifold manifold = future.get();
+            if (!manifold.points.empty())
+            {
+                std::lock_guard<std::mutex> lock(manifoldsMutex);
+                
+                uint64_t key = (static_cast<uint64_t>(std::min(manifold.entityIdA, manifold.entityIdB)) << 32) |
+                    static_cast<uint64_t>(std::max(manifold.entityIdA, manifold.entityIdB));
+                m_ContactMap[key] = m_ContactManifolds.size();
+                m_ContactManifolds.push_back(std::move(manifold));
+            }
+        }
+
+        m_Stats.narrowPhaseContacts = m_ContactManifolds.size();
+    }
+
+    void PhysicsPipelineSystem::ParallelVelocitySolving()
+    {
+        // Apply gravity and integrate velocities (parallel)
+        std::vector<std::future<void>> futures;
+        size_t batchSize = (m_SolverBodies.size() + m_NumThreads - 1) / m_NumThreads;
+
+        for (size_t t = 0; t < m_NumThreads; ++t)
+        {
+            size_t start = t * batchSize;
+            size_t end = std::min(start + batchSize, m_SolverBodies.size());
+            
+            if (start >= m_SolverBodies.size()) break;
+
+            futures.push_back(Utils::ThreadPool::Instance().Submit([this, start, end]() {
+                for (size_t i = start; i < end; ++i)
+                {
+                    auto& body = m_SolverBodies[i];
+                    if (!body.isStatic && body.isAwake && m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
+                    {
+                        float mass = (body.invMass > 0.0f) ? 1.0f / body.invMass : 0.0f;
+                        const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
+                        body.force += world.gravity * mass;
+                    }
+                }
+                IntegrateVelocities(FIXED_TIMESTEP, start, end);
+            }));
+        }
+
+        for (auto& future : futures)
+        {
+            future.get();
+        }
+
+        // Warm start
+        if (m_Config.warmStarting)
+        {
+            WarmStartConstraints();
+        }
+
+        // Solve velocity constraints iteratively (parallel by constraint)
+        for (int i = 0; i < m_Config.velocityIterations; ++i)
+        {
+            SolveVelocityConstraints();
+        }
+    }
+
+    void PhysicsPipelineSystem::ParallelPositionSolving()
+    {
+        IntegratePositions(FIXED_TIMESTEP);
+
+        // Solve position constraints iteratively
+        for (int i = 0; i < m_Config.positionIterations; ++i)
+        {
+            SolvePositionConstraints();
         }
     }
 }
