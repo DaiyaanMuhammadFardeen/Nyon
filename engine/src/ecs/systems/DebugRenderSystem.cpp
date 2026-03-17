@@ -19,55 +19,6 @@ namespace Nyon::ECS
         NYON_DEBUG_LOG("[DEBUG] DebugRenderSystem constructor called");
     }
     
-    // Implement the missing NyonDebugRenderer methods using actual Renderer2D API
-    
-    void DebugRenderSystem::NyonDebugRenderer::DrawLine(const Math::Vector2& p1, const Math::Vector2& p2, 
-                                                       const Math::Vector3& color)
-    {
-        // Direct drawing (for immediate mode)
-        Graphics::Renderer2D::DrawLine(p1, p2, color);
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::DrawSolidCircle(const Math::Vector2& center, float radius, 
-                                                              const Math::Vector3& color)
-    {
-        // Use proper circle drawing with 16 segments
-        Graphics::Renderer2D::DrawSolidCircle(center, radius, color, 16);
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::DrawPoint(const Math::Vector2& point, float size, 
-                                                        const Math::Vector3& color)
-    {
-        // Draw point as a small quad
-        Math::Vector2 quadSize(size, size);
-        Math::Vector2 origin(size * 0.5f, size * 0.5f);
-        Graphics::Renderer2D::DrawQuad(point, quadSize, origin, color);
-    }
-    
-    void DebugRenderSystem::NyonDebugRenderer::DrawCircleOutline(const Math::Vector2& center, float radius, 
-                                                                const Math::Vector3& color)
-    {
-        // Draw proper circle outline using 16 line segments
-        constexpr float PI = 3.14159265359f;
-        constexpr int SEGMENTS = 16;
-        
-        for (int i = 0; i < SEGMENTS; ++i) {
-            float a0 = (2.0f * PI * i) / SEGMENTS;
-            float a1 = (2.0f * PI * (i + 1)) / SEGMENTS;
-            
-            Math::Vector2 p0 = {
-                center.x + radius * static_cast<float>(cos(a0)),
-                center.y + radius * static_cast<float>(sin(a0))
-            };
-            Math::Vector2 p1 = {
-                center.x + radius * static_cast<float>(cos(a1)),
-                center.y + radius * static_cast<float>(sin(a1))
-            };
-            
-            Graphics::Renderer2D::DrawLine(p0, p1, color);
-        }
-    }
-    
     void DebugRenderSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore)
     {
         // Store reference to component store for later use
@@ -92,61 +43,29 @@ namespace Nyon::ECS
         // If we don't have a world entity yet, nothing to draw
         if (m_PhysicsWorldEntity == INVALID_ENTITY)
             return;
-            
-        // Clear previous debug commands
-        m_DebugCommands.clear();
         
-        // Collect debug draw commands (don't render yet)
+        // Set up debug renderer flags based on our configuration
+        Graphics::DebugRenderFlag flags = Graphics::DebugRenderFlag::None;
+        if (m_DrawShapes) flags = flags | Graphics::DebugRenderFlag::Shapes;
+        if (m_DrawAABBs) flags = flags | Graphics::DebugRenderFlag::AABBs;
+        if (m_DrawContacts) flags = flags | Graphics::DebugRenderFlag::Contacts | Graphics::DebugRenderFlag::Manifolds;
+        if (m_DrawCOM) flags = flags | Graphics::DebugRenderFlag::CentersOfMass;
+        
+        m_DebugRenderer.SetActiveFlags(flags);
+        
+        // Render debug information directly
         if (m_DrawShapes) DrawShapes();
         if (m_DrawJoints) DrawJoints();
         if (m_DrawAABBs) DrawAABBs();
         if (m_DrawContacts) DrawContacts();
         if (m_DrawCOM) DrawCenterOfMass();
         if (m_DrawIslands) DrawIslands();
-        
-        // Signal that we have debug info ready to render
-        m_ShouldRender = !m_DebugCommands.empty();
     }
     
     void DebugRenderSystem::RenderDebugInfo()
     {
-        // Only render if we have debug commands and rendering is enabled
-        if (!m_ShouldRender || m_DebugCommands.empty())
-            return;
-            
-        // DON'T call BeginScene() - it would clear the buffers that RenderSystem already drew!
-        // Just execute the debug draw commands directly
-        for (const auto& cmd : m_DebugCommands)
-        {
-            switch (cmd.type)
-            {
-                case DebugDrawCommand::LINE:
-                    Graphics::Renderer2D::DrawLine(cmd.p1, cmd.p2, cmd.color);
-                    break;
-                case DebugDrawCommand::CIRCLE:
-                    Graphics::Renderer2D::DrawCircle(cmd.center, cmd.radius, cmd.color);
-                    break;
-                case DebugDrawCommand::POLYGON:
-                    if (!cmd.vertices.empty())
-                    {
-                        Graphics::Renderer2D::DrawPolygon(cmd.vertices, cmd.color);
-                    }
-                    break;
-                case DebugDrawCommand::POINT:
-                    Graphics::Renderer2D::DrawQuad(cmd.p1, 
-                                                  {cmd.size, cmd.size},
-                                                  {cmd.size * 0.5f, cmd.size * 0.5f}, 
-                                                  cmd.color);
-                    break;
-            }
-        }
-        
-        // DON'T Flush here - let EndScene from RenderSystem flush everything together!
-        // Flushing separately causes flickering and double-buffering issues
-        // Graphics::Renderer2D::Flush();  // REMOVED - causes flickering!
-        
-        // Reset for next frame
-        m_ShouldRender = false;
+        // No-op - all rendering now happens directly in Update() via PhysicsDebugRenderer
+        // This method is kept for API compatibility but does nothing
     }
     
     void DebugRenderSystem::SetFlags(bool drawShapes, bool drawJoints, bool drawAABBs, 
@@ -183,32 +102,21 @@ namespace Nyon::ECS
                 // Use interpolated position and rotation based on render alpha
                 position = transform.GetInterpolatedPosition(m_Alpha);
                 angle = transform.GetInterpolatedRotation(m_Alpha);
-            }
-            
-            // Color based on body state
-            Math::Vector3 color = {0.0f, 1.0f, 0.0f}; // Green default
-            if (body.isStatic) color = {0.5f, 0.5f, 0.5f}; // Gray for static
-            if (!body.isAwake) color = {0.2f, 0.2f, 0.8f}; // Blue for sleeping
-            if (collider && collider->isSensor) color = {1.0f, 1.0f, 0.0f}; // Yellow for sensors
-            
-            if (collider)
-            {
-                switch (collider->GetType())
+                
+                // Create a temporary transform for the debug renderer
+                ECS::TransformComponent renderTransform;
+                renderTransform.position = position;
+                renderTransform.rotation = angle;
+                
+                // Color based on body state
+                Math::Vector3 color = {0.0f, 1.0f, 0.0f}; // Green default
+                if (body.isStatic) color = {0.5f, 0.5f, 0.5f}; // Gray for static
+                if (!body.isAwake) color = {0.2f, 0.2f, 0.8f}; // Blue for sleeping
+                if (collider && collider->isSensor) color = {1.0f, 1.0f, 0.0f}; // Yellow for sensors
+                
+                if (collider)
                 {
-                    case ColliderComponent::ShapeType::Circle:
-                        DrawCircleShape(position, collider->GetCircle(), color);
-                        break;
-                        
-                    case ColliderComponent::ShapeType::Polygon:
-                        DrawPolygonShape(position, angle, collider->GetPolygon(), color);
-                        break;
-                        
-                    case ColliderComponent::ShapeType::Capsule:
-                        DrawCapsuleShape(position, angle, collider->GetCapsule(), color);
-                        break;
-                        
-                    default:
-                        break;
+                    m_DebugRenderer.DrawCollider(*collider, renderTransform, color);
                 }
             }
         }
@@ -222,36 +130,9 @@ namespace Nyon::ECS
     
     void DebugRenderSystem::DrawAABBs()
     {
-        // Query fresh entities each frame to avoid stale pointers
-        const auto& bodyEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
-        
-        for (auto entityId : bodyEntities)
-        {
-            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId))
-                continue;
-                
-            const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
-            
-            // Use interpolated transform position and rotation for smooth rendering
-            Math::Vector2 position = {0.0f, 0.0f};
-            float angle = 0.0f;
-            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
-            {
-                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-                position = transform.GetInterpolatedPosition(m_Alpha);
-                angle = transform.GetInterpolatedRotation(m_Alpha);
-            }
-            
-            Math::Vector2 min, max;
-            collider.CalculateAABB(position, angle, min, max);
-            
-            // Draw AABB outline using queued commands
-            Math::Vector3 color = {1.0f, 0.0f, 0.0f}; // Red for AABBs
-            QueueLine({min.x, min.y}, {max.x, min.y}, color);
-            QueueLine({max.x, min.y}, {max.x, max.y}, color);
-            QueueLine({max.x, max.y}, {min.x, max.y}, color);
-            QueueLine({min.x, max.y}, {min.x, min.y}, color);
-        }
+        // AABBs are now drawn as part of DrawShapes when the flag is enabled
+        // This method is kept for compatibility but does nothing
+        // The PhysicsDebugRenderer handles AABB drawing in DrawCollider
     }
     
     void DebugRenderSystem::DrawContacts()
@@ -268,41 +149,16 @@ namespace Nyon::ECS
         for (const auto& manifold : world.contactManifolds)
         {
             if (!manifold.touching) continue;
-
-            for (const auto& cp : manifold.points)
-            {
-                // Draw contact point as small red circle
-                QueueCircle(cp.position, 3.0f, {1.f, 0.f, 0.f});
-
-                // Draw contact normal as green line
-                Math::Vector2 normalEnd = cp.position + manifold.normal * 10.0f;
-                QueueLine(cp.position, normalEnd, {0.f, 1.f, 0.f});
-            }
+            
+            m_DebugRenderer.DrawManifold(manifold);
         }
     }
     
     void DebugRenderSystem::DrawCenterOfMass()
     {
-        // Query fresh entities each frame to avoid stale pointers
-        const auto& bodyEntities = m_ComponentStore->GetEntitiesWithComponent<PhysicsBodyComponent>();
-        
-        for (auto entityId : bodyEntities)
-        {
-            const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
-            
-            Math::Vector2 position = {0.0f, 0.0f};
-            if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
-            {
-                const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-                position = transform.GetInterpolatedPosition(m_Alpha);
-            }
-            
-            Math::Vector2 com = position + body.centerOfMass;
-            
-            // Draw center of mass as a small point using queued command
-            Math::Vector3 color = {1.0f, 0.0f, 1.0f}; // Magenta
-            QueuePoint(com, 3.0f, color);
-        }
+        // Centers of mass are now drawn as part of DrawShapes when the flag is enabled
+        // This method is kept for compatibility but does nothing
+        // The PhysicsDebugRenderer handles CoM drawing in DrawCollider
     }
     
     void DebugRenderSystem::DrawIslands()
@@ -311,93 +167,38 @@ namespace Nyon::ECS
         // Set m_DrawIslands = false to disable
     }
     
-    void DebugRenderSystem::QueueLine(const Math::Vector2& p1, const Math::Vector2& p2, const Math::Vector3& color)
-    {
-        DebugDrawCommand cmd;
-        cmd.type = DebugDrawCommand::LINE;
-        cmd.p1 = p1;
-        cmd.p2 = p2;
-        cmd.color = color;
-        m_DebugCommands.push_back(cmd);
-    }
-    
-    void DebugRenderSystem::QueueCircle(const Math::Vector2& center, float radius, const Math::Vector3& color)
-    {
-        DebugDrawCommand cmd;
-        cmd.type = DebugDrawCommand::CIRCLE;
-        cmd.center = center;
-        cmd.radius = radius;
-        cmd.color = color;
-        m_DebugCommands.push_back(cmd);
-    }
-    
-    void DebugRenderSystem::QueuePolygon(const std::vector<Math::Vector2>& vertices, const Math::Vector3& color)
-    {
-        DebugDrawCommand cmd;
-        cmd.type = DebugDrawCommand::POLYGON;
-        cmd.vertices = vertices;
-        cmd.color = color;
-        m_DebugCommands.push_back(cmd);
-    }
-    
-    void DebugRenderSystem::QueuePoint(const Math::Vector2& point, float size, const Math::Vector3& color)
-    {
-        DebugDrawCommand cmd;
-        cmd.type = DebugDrawCommand::POINT;
-        cmd.p1 = point;
-        cmd.size = size;
-        cmd.color = color;
-        m_DebugCommands.push_back(cmd);
-    }
-    
     void DebugRenderSystem::DrawCircleShape(const Math::Vector2& position, 
                                           const ColliderComponent::CircleShape& circle,
                                           const Math::Vector3& color)
     {
-        Math::Vector2 worldCenter = position + circle.center;
-        QueueCircle(worldCenter, circle.radius, color);
+        // Create temporary transform
+        ECS::TransformComponent transform;
+        transform.position = position;
+        
+        m_DebugRenderer.DrawCircleShape(circle, transform, color);
     }
     
     void DebugRenderSystem::DrawPolygonShape(const Math::Vector2& position, float angle,
                                            const ColliderComponent::PolygonShape& polygon,
                                            const Math::Vector3& color)
     {
-        if (polygon.vertices.empty()) return;
+        // Create temporary transform
+        ECS::TransformComponent transform;
+        transform.position = position;
+        transform.rotation = angle;
         
-        std::vector<Math::Vector2> worldVertices;
-        worldVertices.reserve(polygon.vertices.size());
-        
-        // Transform vertices to world space
-        float cosAngle = cos(angle);
-        float sinAngle = sin(angle);
-        
-        for (const auto& vertex : polygon.vertices)
-        {
-            // Rotate and translate
-            Math::Vector2 rotated{
-                vertex.x * cosAngle - vertex.y * sinAngle,
-                vertex.x * sinAngle + vertex.y * cosAngle
-            };
-            worldVertices.push_back(position + rotated);
-        }
-        
-        QueuePolygon(worldVertices, color);
+        m_DebugRenderer.DrawPolygonShape(polygon, transform, color);
     }
     
     void DebugRenderSystem::DrawCapsuleShape(const Math::Vector2& position, float angle,
                                            const ColliderComponent::CapsuleShape& capsule,
                                            const Math::Vector3& color)
     {
-        // Draw capsule as two circles connected by rectangles
-        // Simplified implementation - would normally draw proper capsule shape
+        // Create temporary transform
+        ECS::TransformComponent transform;
+        transform.position = position;
+        transform.rotation = angle;
         
-        Math::Vector2 center1 = position + capsule.center1;
-        Math::Vector2 center2 = position + capsule.center2;
-        
-        QueueCircle(center1, capsule.radius, color);
-        QueueCircle(center2, capsule.radius, color);
-                
-        // Draw connecting line
-        QueueLine(center1, center2, color);
+        m_DebugRenderer.DrawCapsuleShape(capsule, transform, color);
     }
 }
