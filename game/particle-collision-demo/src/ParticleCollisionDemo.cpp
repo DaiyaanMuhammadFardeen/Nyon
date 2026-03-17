@@ -51,9 +51,9 @@ void ParticleCollisionDemo::InitializeParticles() {
         p.vx = vel(m_Rng);
         p.vy = vel(m_Rng);
         p.radius = radius(m_Rng);
-        p.r = 1.0f;
-        p.g = 1.0f;
-        p.b = 1.0f;
+        p.r = color(m_Rng);
+        p.g = color(m_Rng);
+        p.b = color(m_Rng);
         p.mass = p.radius * p.radius; // Area-based mass
     }
 

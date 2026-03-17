@@ -29,12 +29,10 @@ TEST(PhysicsBodyComponentTest, DefaultConstructor)
     
     // Translational physics
     EXPECT_VECTOR2_NEAR(body.velocity, Nyon::Math::Vector2(0.0f, 0.0f), 1e-5f);
-    EXPECT_VECTOR2_NEAR(body.acceleration, Nyon::Math::Vector2(0.0f, 0.0f), 1e-5f);
     EXPECT_VECTOR2_NEAR(body.force, Nyon::Math::Vector2(0.0f, 0.0f), 1e-5f);
     
     // Rotational physics
     EXPECT_FLOAT_NEAR(body.angularVelocity, 0.0f, 1e-5f);
-    EXPECT_FLOAT_NEAR(body.angularAcceleration, 0.0f, 1e-5f);
     EXPECT_FLOAT_NEAR(body.torque, 0.0f, 1e-5f);
     
     // Mass properties

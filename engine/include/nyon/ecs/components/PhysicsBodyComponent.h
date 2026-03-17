@@ -15,12 +15,10 @@ namespace Nyon::ECS
     {
         // === TRANSLATIONAL PHYSICS ===
         Math::Vector2 velocity = {0.0f, 0.0f};      // Linear velocity in pixels/second
-        Math::Vector2 acceleration = {0.0f, 0.0f};  // Linear acceleration in pixels/second^2
         Math::Vector2 force = {0.0f, 0.0f};         // Accumulated forces for this frame
         
         // === ROTATIONAL PHYSICS ===
         float angularVelocity = 0.0f;               // Angular velocity in radians/second
-        float angularAcceleration = 0.0f;           // Angular acceleration in radians/second^2
         float torque = 0.0f;                        // Accumulated torques for this frame
         
         // === MASS PROPERTIES ===

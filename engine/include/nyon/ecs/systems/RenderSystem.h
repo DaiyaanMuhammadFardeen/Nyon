@@ -40,8 +40,8 @@ namespace Nyon::ECS
 #ifdef _DEBUG
             static int s_RenderDebugCounter = 0;
             if (++s_RenderDebugCounter >= 10) {
-                s_RenderDebugCounter = 0;
                 std::cerr << "[RENDER@" << s_RenderDebugCounter << "] Drawing " << renderEntities.size() << " entities:" << std::endl;
+                s_RenderDebugCounter = 0;
             }
 #endif
             
@@ -55,12 +55,12 @@ namespace Nyon::ECS
 #ifdef _DEBUG
                 static int s_RenderEntityCounter = 0;
                 if (++s_RenderEntityCounter >= 10) {
-                    s_RenderEntityCounter = 0;
                     std::cerr << "  Entity[" << entity << "] pos=(" << transform.position.x << "," << transform.position.y 
                               << ") size=(" << render.size.x << "," << render.size.y 
                               << ") color=(" << render.color.x << "," << render.color.y << "," << render.color.z 
                               << ") shape=" << (int)render.shapeType 
                               << ") visible=" << render.visible << std::endl;
+                    s_RenderEntityCounter = 0;
                 }
 #endif
                 

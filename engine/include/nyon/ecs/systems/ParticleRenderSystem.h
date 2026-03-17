@@ -2,7 +2,7 @@
 
 #include "nyon/ecs/System.h"
 #include "nyon/graphics/ParticleRenderer.h"
-#include "nyon/Particle.h"
+#include "nyon/ecs/components/ParticleComponent.h"
 #include <vector>
 
 namespace Nyon {

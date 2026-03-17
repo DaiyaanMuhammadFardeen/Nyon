@@ -337,7 +337,7 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     body.allowSleep = false;  // Player should never sleep
 
     // Lock rotation for player to prevent unwanted spinning
-    body.motionLocks.lockRotation = true;
+    body.motionLocks.lockRotation = false;
 
     // ── render component ─────────────────────────────────────────────────────
     ECS::RenderComponent playerRender({ 50.0f, 50.0f }, { 1.0f, 0.5f, 0.0f });  // Orange color
@@ -405,7 +405,7 @@ void SimplePhysicsDemo::CreateSpawnedQuad(float x, float y)
     body.allowSleep = true;
 
     // Lock rotation to prevent spinning
-    body.motionLocks.lockRotation = true;
+    body.motionLocks.lockRotation = false;
 
     // ── render component ─────────────────────────────────────────────────────
     ECS::RenderComponent spawnRender({ 50.0f, 50.0f }, { 0.5f, 1.0f, 0.5f });  // Green color
@@ -518,7 +518,7 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
     body.allowSleep = true;
 
     // Lock rotation to prevent spinning
-    body.motionLocks.lockRotation = true;
+    body.motionLocks.lockRotation = false;
 
     // Generate random color for this circle
     std::uniform_real_distribution<float> colorDist(0.0f, 1.0f);

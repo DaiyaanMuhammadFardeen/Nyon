@@ -2,7 +2,7 @@
 
 #include "nyon/core/ECSApplication.h"
 #include "nyon/ecs/systems/ParticleRenderSystem.h"
-#include "nyon/Particle.h"
+#include "nyon/ecs/components/ParticleComponent.h"
 #include <vector>
 #include <random>
 

@@ -117,18 +117,18 @@ namespace Nyon
 
             // --- PHYSICS UPDATE LOOP ---
             // Consumes time from the accumulator in fixed chunks
-            while (m_Accumulator >= FIXED_TIMESTEP)
+            while (m_Accumulator >= Nyon::FIXED_TIMESTEP_D)
             {
-                OnFixedUpdate(static_cast<float>(FIXED_TIMESTEP));
+                OnFixedUpdate(static_cast<float>(Nyon::FIXED_TIMESTEP_D));
                 
                 // Advance simulation time
-                m_Accumulator -= FIXED_TIMESTEP;
+                m_Accumulator -= Nyon::FIXED_TIMESTEP_D;
             }
 
             // --- RENDER ---
             // Calculate 'alpha': how far are we into the *next* physics frame?
             // 0.0 = exactly at prev state, 1.0 = exactly at current state
-            double alpha = m_Accumulator / FIXED_TIMESTEP;
+            double alpha = m_Accumulator / Nyon::FIXED_TIMESTEP_D;
 
             OnInterpolateAndRender(static_cast<float>(alpha));
 

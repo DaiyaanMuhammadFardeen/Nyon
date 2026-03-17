@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <memory>
+#include "nyon/EngineConstants.h"
 
 namespace Nyon
 {
@@ -41,8 +42,6 @@ namespace Nyon
         // Variables for fixed timestep game loop with interpolation
         double m_CurrentTime;
         double m_Accumulator;
-        static constexpr double FIXED_TIMESTEP = 1.0 / 60.0;  // 60 Hz physics updates
-        static constexpr double MAX_FRAME_TIME = 0.25;       // Max 0.25s catch up to prevent spiral of death
 
         static Application* s_Instance;
     };

@@ -381,7 +381,7 @@ namespace Nyon::ECS
     {
         if (m_Config.useIslandSleeping)
         {
-            m_IslandManager->UpdateIslands(FIXED_TIMESTEP, m_ActiveEntities);
+            m_IslandManager->UpdateIslands(Nyon::FIXED_TIMESTEP, m_ActiveEntities);
             m_Stats.islandStats = m_IslandManager->GetStatistics();
         }
     }
@@ -526,7 +526,7 @@ namespace Nyon::ECS
         }
         
         // 2. Integrate velocities from forces
-        IntegrateVelocities(FIXED_TIMESTEP);
+        IntegrateVelocities(Nyon::FIXED_TIMESTEP);
         
         // 3. Warm start with this frame's post-integration velocities
         if (m_Config.warmStarting)
@@ -545,7 +545,7 @@ namespace Nyon::ECS
     {
 
 
-        IntegratePositions(FIXED_TIMESTEP);
+        IntegratePositions(Nyon::FIXED_TIMESTEP);
 
         // Solve position constraints for stabilization
         for (int i = 0; i < m_Config.positionIterations; ++i)
@@ -767,7 +767,7 @@ namespace Nyon::ECS
             Math::Vector2 displacement = {0.0f, 0.0f};
             if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId)) {
                 const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
-                displacement = body.velocity * FIXED_TIMESTEP;
+                displacement = body.velocity * Nyon::FIXED_TIMESTEP;
             }
             m_BroadPhaseTree.MoveProxy(it->second, aabb, displacement);
         }

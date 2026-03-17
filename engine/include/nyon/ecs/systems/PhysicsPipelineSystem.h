@@ -8,6 +8,7 @@
 #include "nyon/physics/Island.h"
 #include "nyon/physics/DynamicTree.h"
 #include "nyon/utils/ThreadPool.h"
+#include "nyon/EngineConstants.h"
 #include <vector>
 #include <unordered_map>
 #include <future>
@@ -190,7 +191,6 @@ namespace Nyon::ECS
         // Contact management
         std::vector<ContactManifold> m_ContactManifolds;
         std::unordered_map<uint64_t, size_t> m_ContactMap; // entityId pair -> manifold index
-        std::vector<bool> m_ContactPersisted; // Tracks which contacts persisted
         
         // Impulse cache for warm starting (keyed by entity pair + feature ID)
         struct ImpulseData
@@ -209,12 +209,8 @@ namespace Nyon::ECS
         std::unordered_map<uint32_t, size_t> m_EntityToSolverIndex;
         std::vector<VelocityConstraint> m_VelocityConstraints;
         
-        // Timing
-        float m_Accumulator = 0.0f;
-        
-        // Constants
-        static constexpr float FIXED_TIMESTEP = 1.0f / 60.0f; // 60 FPS physics
-        static constexpr float MAX_TIMESTEP = 0.25f;          // Maximum time step
+        // Note: Fixed timestep accumulation is managed by Application::Run()
+        // Physics updates run at FIXED_TIMESTEP (60 FPS) with sub-stepping for high speeds
         
         // Multi-threading
         bool m_UseMultiThreading = true;
