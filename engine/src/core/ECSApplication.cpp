@@ -4,6 +4,7 @@
 #include "nyon/ecs/systems/PhysicsPipelineSystem.h"
 #include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/ecs/systems/ParticleRenderSystem.h"
+#include "nyon/ecs/systems/CameraSystem.h"
 #include "nyon/utils/InputManager.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
@@ -45,6 +46,7 @@ namespace Nyon
         
         // NOW initialize ECS systems in proper order (after game has created required components)
         m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
+        m_SystemManager.AddSystem(std::make_unique<ECS::CameraSystem>());  // Unified camera management
         m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
         // RenderSystem is NOT added to SystemManager - it's called separately during interpolation
         // Debug renderer has been completely disabled per user request
@@ -117,19 +119,8 @@ namespace Nyon
             // Render particles if particle render system exists
             auto* particleSystem = m_SystemManager.GetSystem<ECS::ParticleRenderSystem>();
             if (particleSystem) {
-                // Compute dynamic view-projection matrix based on actual window size
-                GLFWwindow* window = GetWindow();
-                int width = 1280, height = 720;
-                if (window) {
-                    glfwGetFramebufferSize(window, &width, &height);
-                }
-                
-                // Create orthographic projection matching Renderer2D's convention
-                glm::mat4 vp = glm::ortho(0.0f, static_cast<float>(width), 
-                                         0.0f, static_cast<float>(height), 
-                                         -1.0f, 1.0f);
-                
-                particleSystem->SetViewProjection(vp);
+                // ParticleRenderer now uses Renderer2D's active camera directly
+                // No need to set VP matrix manually
                 particleSystem->Render(alpha);
             }
         }

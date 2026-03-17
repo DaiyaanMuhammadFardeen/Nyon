@@ -67,6 +67,12 @@ namespace Nyon::Math
             float dy = a.y - b.y;
             return dx * dx + dy * dy;
         }
+        
+        // Linear interpolation between two vectors
+        [[nodiscard]] static Vector2 Lerp(const Vector2& a, const Vector2& b, float t)
+        {
+            return Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        }
     };
     
     /**

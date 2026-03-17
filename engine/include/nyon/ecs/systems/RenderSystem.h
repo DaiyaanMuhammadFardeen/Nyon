@@ -3,8 +3,12 @@
 #include "nyon/ecs/System.h"
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/ecs/components/RenderComponent.h"
+#include "nyon/ecs/components/CameraComponent.h"
 #include "nyon/graphics/Renderer2D.h"
+#include "nyon/core/Application.h"
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
+#include <iostream>
 
 namespace Nyon::ECS
 {
@@ -32,7 +36,42 @@ namespace Nyon::ECS
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             
-            Graphics::Renderer2D::BeginScene();
+            // Find and use the active camera
+            const CameraComponent* activeCamera = nullptr;
+            const auto& cameraEntities = m_ComponentStore->GetEntitiesWithComponent<CameraComponent>();
+            
+            for (EntityID camEntity : cameraEntities)
+            {
+                const auto& camera = m_ComponentStore->GetComponent<CameraComponent>(camEntity);
+                if (camera.isActive)
+                {
+                    activeCamera = &camera;
+                    break;
+                }
+            }
+            
+            // Update camera screen dimensions from window
+            GLFWwindow* window = nullptr;
+            try { window = Application::Get().GetWindow(); } catch (...) {}
+            int width = 1280, height = 720;
+            if (window) glfwGetFramebufferSize(window, &width, &height);
+            
+            if (activeCamera)
+            {
+                // Update camera's cached dimensions
+                const_cast<CameraComponent*>(activeCamera)->UpdateScreenDimensions(static_cast<float>(width), static_cast<float>(height));
+                // Use camera's view-projection matrix
+                Graphics::Renderer2D::BeginScene(activeCamera->camera);
+            }
+            else
+            {
+                // No camera - use default orthographic projection based on window size
+                Graphics::Camera2D defaultCamera;
+                defaultCamera.position = {0.0f, 0.0f};
+                defaultCamera.zoom = 1.0f;
+                defaultCamera.rotation = 0.0f;
+                Graphics::Renderer2D::BeginScene(defaultCamera);
+            }
             
             // Render all entities with render components
             const auto& renderEntities = m_ComponentStore->GetEntitiesWithComponent<RenderComponent>();

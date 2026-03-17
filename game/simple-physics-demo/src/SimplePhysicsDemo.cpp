@@ -70,7 +70,7 @@ void SimplePhysicsDemo::OnECSFixedUpdate(float deltaTime)
     HandlePlayerInput(deltaTime);
 
     // 1. Define your spawn interval (0.1 seconds = 100ms)
-    const float spawnInterval = 0.3f;
+    const float spawnInterval = 1.0f;
 
     while (m_SimTime >= m_NextAutoSpawnTime)
     {
@@ -304,27 +304,24 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     t.previousRotation = 0.0f;
 
     // ── collider (set up FIRST so we can derive inertia from it) ─────────────
-    // 50×50 square, centered on the origin.
-    ECS::ColliderComponent::PolygonShape playerShape({
-        { -25.0f, -25.0f },
-        {  25.0f, -25.0f },
-        {  25.0f,  25.0f },
-        { -25.0f,  25.0f }
-    });
+    // Circle with radius 25px (equivalent to the previous 50x50 square's half-extent)
+    ECS::ColliderComponent::CircleShape playerShape;
+    playerShape.center = { 0.0f, 0.0f };
+    playerShape.radius = 25.0f;
 
     ECS::ColliderComponent playerCollider(playerShape);
     playerCollider.material.friction    = 0.4f;
     playerCollider.material.restitution = 0.8f;  // Low restitution for better control
-    playerCollider.material.density     = 0.0008f;
+    playerCollider.material.density     = 0.08f;
 
     // ── physics body ─────────────────────────────────────────────────────────
     ECS::PhysicsBodyComponent body;
 
     // Calculate inertia from collider shape
     {
-        float area    = playerCollider.CalculateArea();           // 2500.0 px²
+        float area    = playerCollider.CalculateArea();           // π * r²
         float density = (area > 0.0f) ? body.mass / area : 0.0f;
-        body.SetMass(2.0f);
+        body.SetMass(5.0f);
         body.SetInertia(playerCollider.CalculateInertiaPerUnitMass() * body.mass);
     }
 
@@ -340,8 +337,10 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     body.motionLocks.lockRotation = false;
 
     // ── render component ─────────────────────────────────────────────────────
+    // Render as a circle: width/height = diameter, origin = radius
     ECS::RenderComponent playerRender({ 50.0f, 50.0f }, { 1.0f, 0.5f, 0.0f });  // Orange color
-    playerRender.origin = { 25.0f, 25.0f };
+    playerRender.origin      = { 25.0f, 25.0f };
+    playerRender.shapeType   = ECS::RenderComponent::ShapeType::Circle;
 
     // ── behavior component for input handling ────────────────────────────────
     ECS::BehaviorComponent behavior;
@@ -352,7 +351,7 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     cs.AddComponent(m_PlayerEntity, std::move(playerRender));
     cs.AddComponent(m_PlayerEntity, std::move(behavior));
 
-    std::cerr << "[DEMO] Player quad created at (640, 360). "
+    std::cerr << "[DEMO] Player circle created at (640, 360). "
               << "Use WASD to move and jump.\n";
 }
 

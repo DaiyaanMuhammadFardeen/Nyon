@@ -1,11 +1,12 @@
 #include "nyon/ecs/systems/ParticleRenderSystem.h"
-#include <glm/gtc/matrix_transform.hpp>
+#include "nyon/graphics/Renderer2D.h"
+#include "nyon/core/Application.h"
+#include <GLFW/glfw3.h>
 
 namespace Nyon::ECS {
 
 ParticleRenderSystem::ParticleRenderSystem() 
-    : m_ViewProjection(1.0f) {
-    m_ParticleRenderer = std::make_unique<Graphics::ParticleRenderer>();
+    : m_ParticleRenderer(std::make_unique<Graphics::ParticleRenderer>()) {
 }
 
 void ParticleRenderSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore) {
@@ -27,8 +28,19 @@ void ParticleRenderSystem::Render(float alpha) {
         m_ParticleRenderer->SubmitCircle(p.x, p.y, p.radius, p.r, p.g, p.b);
     }
 
-    // Use the view-projection matrix set by ECSApplication
-    m_ParticleRenderer->Flush(m_ViewProjection);
+    // Use the active camera's view-projection matrix from Renderer2D
+    const auto& camera = Graphics::Renderer2D::GetActiveCamera();
+    
+    // Get screen dimensions from window
+    GLFWwindow* window = nullptr;
+    try { window = Nyon::Application::Get().GetWindow(); } catch (...) {}
+    int width = 1280, height = 720;
+    if (window) glfwGetFramebufferSize(window, &width, &height);
+    
+    glm::mat4 vp = camera.GetViewProjectionMatrix(static_cast<float>(width), static_cast<float>(height));
+    
+    // Flush with the VP matrix from the active camera
+    m_ParticleRenderer->Flush(vp);
 }
 
 void ParticleRenderSystem::SetParticles(const std::vector<Nyon::Particle>& particles) {

@@ -104,6 +104,12 @@ namespace Nyon::Graphics
         static void BeginScene(const Camera2D& camera = Camera2D());
         static void EndScene();
         
+        // Get the current active camera
+        static const Camera2D& GetActiveCamera();
+        
+        // Set screen dimensions for VP matrix calculation
+        static void SetScreenDimensions(float width, float height);
+        
         // === BASIC SHAPES ===
         static void DrawQuad(const Math::Vector2& position, 
                             const Math::Vector2& size, 

@@ -1015,6 +1015,24 @@ void Renderer2D::BeginScene(const Camera2D& camera)
 
 void Renderer2D::EndScene() { Flush(); }
 
+const Camera2D& Renderer2D::GetActiveCamera()
+{
+    if (!s_Instance) {
+        static Camera2D defaultCamera;
+        return defaultCamera;
+    }
+    return s_Instance->CurrentCamera;
+}
+
+void Renderer2D::SetScreenDimensions(float width, float height)
+{
+    if (!s_Instance || !s_Instance->Initialized) return;
+    
+    if (width > 0 && height > 0) {
+        s_Instance->UpdateProjectionMatrix(width, height);
+    }
+}
+
 // =============================================================================
 // Flush
 //
