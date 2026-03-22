@@ -1,8 +1,5 @@
 #include "SimplePhysicsDemo.h"
-
-int main()
-{
+int main() {
     SimplePhysicsDemo demo;
     demo.Run();
-    return 0;
-}
+    return 0; }

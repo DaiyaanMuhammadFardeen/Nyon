@@ -4,200 +4,94 @@
 #include <algorithm>
 #include <iostream>
 #include <mutex>
-
-namespace Nyon::ECS
-{
-    void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore)
-    {
+namespace Nyon::ECS {
+    void PhysicsPipelineSystem::Initialize(EntityManager& entityManager, ComponentStore& componentStore) {
         m_ComponentStore = &componentStore;
-
-        // Find physics world component and store its entity ID
         m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
-                m_PhysicsWorldEntity = entityId;
-                });
-
-        if (m_PhysicsWorldEntity == INVALID_ENTITY)
-        {
-            return;
-        }
-
-        // Initialize island manager
+                m_PhysicsWorldEntity = entityId; });
+        if (m_PhysicsWorldEntity == INVALID_ENTITY) {
+            return; }
         m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
-        
-        // Initialize thread pool
         Utils::ThreadPool::Initialize();
         m_NumThreads = Utils::ThreadPool::Instance().GetThreadCount();
-        std::cerr << "[PHYSICS] Multi-threaded physics initialized with " << m_NumThreads << " threads\n";
-    }
-
-    void PhysicsPipelineSystem::Update(float deltaTime)
-    {
-        // Lazy initialization - find PhysicsWorldComponent if not already found
-        if (m_PhysicsWorldEntity == INVALID_ENTITY && m_ComponentStore)
-        {
+        std::cerr << "[PHYSICS] Multi-threaded physics initialized with " << m_NumThreads << " threads\n"; }
+    void PhysicsPipelineSystem::Update(float deltaTime) {
+        if (m_PhysicsWorldEntity == INVALID_ENTITY && m_ComponentStore) {
             m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
                     m_PhysicsWorldEntity = entityId;
-
-                    // Initialize island manager now that we have a physics world
-                    if (!m_IslandManager)
-                    {
-                        m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
-                    }
-                    });
-        }
-
-        if (m_PhysicsWorldEntity == INVALID_ENTITY || !m_ComponentStore)
-        {
-            return;
-        }
-
-        // Safety check: ensure IslandManager is initialized
-        if (!m_IslandManager)
-        {
-            m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore);
-        }
-
+                    if (!m_IslandManager) {
+                        m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore); } }); }
+        if (m_PhysicsWorldEntity == INVALID_ENTITY || !m_ComponentStore) {
+            return; }
+        if (!m_IslandManager) {
+            m_IslandManager = std::make_unique<Physics::IslandManager>(*m_ComponentStore); }
         auto startTime = std::chrono::high_resolution_clock::now();
-
-        // === IMPLEMENT SUB-STEPPING FOR HIGH-SPEED BODIES ===
-        // Check if any dynamic body exceeds speed threshold
         float maxSpeedSquared = 0.0f;
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
                 if (!body.isStatic) {
                     float speedSq = body.velocity.LengthSquared();
                     if (speedSq > maxSpeedSquared) {
-                        maxSpeedSquared = speedSq;
-                    }
-                }
-                });
-        
-        // Sub-step threshold: 400 px/s (adjustable based on tuning)
+                        maxSpeedSquared = speedSq; } } });
         constexpr float SUBSTEP_SPEED_THRESHOLD = 400.0f;
         int numSubSteps = 1;
         if (std::sqrt(maxSpeedSquared) > SUBSTEP_SPEED_THRESHOLD) {
-            numSubSteps = 2;  // Split into 2 sub-steps
-        }
-        
+            numSubSteps = 2;    }
         float subStepDt = deltaTime / numSubSteps;
-        
-        // Execute physics pipeline with sub-stepping
         for (int step = 0; step < numSubSteps; ++step) {
-            // Collect active entities for each sub-step
             m_ActiveEntities.clear();
             m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, const PhysicsBodyComponent& body) {
                     if (!body.isStatic) {
-                        m_ActiveEntities.push_back(entityId);
-                    }
-                    });
-
-            // Execute pipeline phases for this sub-step
+                        m_ActiveEntities.push_back(entityId); } });
             PrepareBodiesForUpdate();
-            
-            // Use multi-threaded pipeline if enabled and beneficial
             if (m_UseMultiThreading && m_ActiveEntities.size() > 1) {
                 ParallelBroadPhase();
-                ParallelNarrowPhase();
-            } else {
+                ParallelNarrowPhase(); } else {
                 BroadPhaseDetection();
-                NarrowPhaseDetection();
-            }
-            
+                NarrowPhaseDetection(); }
             IslandDetection();
             ConstraintInitialization();
-            
             if (m_UseMultiThreading && m_VelocityConstraints.size() > 1) {
                 ParallelVelocitySolving(subStepDt);
-                ParallelPositionSolving(subStepDt);
-            } else {
+                ParallelPositionSolving(subStepDt); } else {
                 VelocitySolving();
-                PositionSolving();
-            }
-            
+                PositionSolving(); }
             Integration();
             StoreImpulses();
             UpdateSleeping();
-            UpdateTransformsFromSolver();
-        }
-
+            UpdateTransformsFromSolver(); }
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration<float, std::milli>(endTime - startTime);
-        m_Stats.updateTime = duration.count();
-    }
-
-    void PhysicsPipelineSystem::PrepareBodiesForUpdate()
-    {
+        m_Stats.updateTime = duration.count(); }
+    void PhysicsPipelineSystem::PrepareBodiesForUpdate() {
         m_SolverBodies.clear();
         m_EntityToSolverIndex.clear();
-
         size_t solverIndex = 0;
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, PhysicsBodyComponent& body) {
-                // Determine if body should be included in solver
                 bool shouldInclude = false;
-
-                if (body.isStatic)
-                {
-                // Static bodies are always included
-                shouldInclude = true;
-                }
-                else
-                {
-                // For dynamic bodies, check both island manager and component's own awake state.
-                // Bodies that explicitly disallow sleeping should always be processed.
-                if (!body.allowSleep)
-                {
-                    shouldInclude = true;
-                }
-                else
-                {
+                if (body.isStatic) {
+                shouldInclude = true; }
+                else {
+                if (!body.allowSleep) {
+                    shouldInclude = true; }
+                else {
                     bool islandAwake = m_IslandManager->IsBodyAwake(entityId);
                     bool componentAwake = body.isAwake;
-
-                    // Include if either says awake (treat unknown bodies as awake)
-                    shouldInclude = islandAwake || componentAwake;
-                }
-                }
-
-                if (!shouldInclude)
-                {
-                    return; // Skip sleeping bodies
-                }
-
-                // === COMPUTE MASS PROPERTIES FROM COLLIDER SHAPE ===
-                // This ensures inertia is correctly computed from shape geometry
-                if (!body.isStatic && m_ComponentStore->HasComponent<ColliderComponent>(entityId))
-                {
+                    shouldInclude = islandAwake || componentAwake; } }
+                if (!shouldInclude) {
+                    return;   }
+                if (!body.isStatic && m_ComponentStore->HasComponent<ColliderComponent>(entityId)) {
                     const auto& collider = m_ComponentStore->GetComponent<ColliderComponent>(entityId);
-
-                    // Calculate mass from area and density ONLY if not explicitly set
-                    if (!body.massIsExplicit)
-                    {
+                    if (!body.massIsExplicit) {
                         float area = collider.CalculateArea();
                         float density = collider.material.density;
                         float calculatedMass = area * density;
-
-                        // Only update mass if it hasn't been explicitly set (i.e., still default 1.0)
-                        // or if the calculated mass is significantly different
-                        if (body.mass <= 0.0f || std::abs(body.mass - calculatedMass) > 0.01f)
-                        {
-                            body.SetMass(calculatedMass);
-                        }
-                    }
-
-                    // Calculate and set inertia from shape geometry ONLY if not explicitly set
-                    if (!body.inertiaIsExplicit)
-                    {
+                        if (body.mass <= 0.0f || std::abs(body.mass - calculatedMass) > 0.01f) {
+                            body.SetMass(calculatedMass); } }
+                    if (!body.inertiaIsExplicit) {
                         float unitInertia = collider.CalculateInertiaPerUnitMass();
                         float calculatedInertia = unitInertia * body.mass;
-
-                        // Only update inertia if it hasn't been explicitly set (i.e., still default 1.0)
-                        // or if the calculated inertia is significantly different
-                        if (body.inertia <= 0.0f || std::abs(body.inertia - calculatedInertia) > 0.01f)
-                        {
-                            body.SetInertia(calculatedInertia);
-                        }
-                    }
-                }
-
+                        if (body.inertia <= 0.0f || std::abs(body.inertia - calculatedInertia) > 0.01f) {
+                            body.SetInertia(calculatedInertia); } } }
                 SolverBody solverBody;
                 solverBody.entityId = entityId;
                 solverBody.isStatic = body.isStatic;
@@ -205,186 +99,96 @@ namespace Nyon::ECS
                 solverBody.invMass = body.inverseMass;
                 solverBody.invInertia = body.inverseInertia;
                 solverBody.localCenter = body.centerOfMass;
-
-                // Get transform
-                if (m_ComponentStore->HasComponent<TransformComponent>(entityId))
-                {
+                if (m_ComponentStore->HasComponent<TransformComponent>(entityId)) {
                     const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
                     solverBody.position = transform.position;
                     solverBody.angle = transform.rotation;
                     solverBody.prevPosition = transform.previousPosition;
-                    solverBody.prevAngle = transform.previousRotation;
-                }
-
-                // Get current velocities
+                    solverBody.prevAngle = transform.previousRotation; }
                 solverBody.velocity = body.velocity;
                 solverBody.angularVelocity = body.angularVelocity;
-
-                // Initialize forces from ECS component (user-applied forces, gravity, etc.)
                 solverBody.force = body.force;
                 solverBody.torque = body.torque;
-
-                // Copy damping coefficients from physics body
-                solverBody.linearDamping = body.drag;           // Use existing drag field
-                solverBody.angularDamping = body.angularDamping; // Use existing angularDamping field
-
-                // Enforce motion locks early in the solver so collisions do not cause unwanted rotation.
-                // This keeps the body stable when lockRotation is enabled (e.g., player character).
-                if (body.motionLocks.lockRotation)
-                {
+                solverBody.linearDamping = body.drag;            
+                solverBody.angularDamping = body.angularDamping;  
+                if (body.motionLocks.lockRotation) {
                     solverBody.angularVelocity = 0.0f;
                     solverBody.torque = 0.0f;
-                    solverBody.invInertia = 0.0f;
-                }
-
-                // Clear ECS-side forces so they don't accumulate across frames
+                    solverBody.invInertia = 0.0f; }
                 body.ClearForces();
-
                 m_SolverBodies.push_back(solverBody);
-                m_EntityToSolverIndex[entityId] = solverIndex++;
-        });
-    }
-
-    void PhysicsPipelineSystem::BroadPhaseDetection()
-    {
+                m_EntityToSolverIndex[entityId] = solverIndex++; }); }
+    void PhysicsPipelineSystem::BroadPhaseDetection() {
         m_BroadPhasePairs.clear();
-
-        // DON'T clear m_ShapeProxyMap - we need to preserve proxy IDs across frames
-        // Only remove proxies for entities that no longer have colliders
         std::vector<uint32_t> entitiesToRemove;
-        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
-        {
-            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId))
-            {
-                entitiesToRemove.push_back(entityId);
-            }
-        }
-
-        for (uint32_t entityId : entitiesToRemove)
-        {
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap) {
+            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId)) {
+                entitiesToRemove.push_back(entityId); } }
+        for (uint32_t entityId : entitiesToRemove) {
             uint32_t proxyId = m_ShapeProxyMap[entityId];
             m_BroadPhaseTree.DestroyProxy(proxyId);
-            m_ShapeProxyMap.erase(entityId);
-        }
-
-        // Update broad phase tree and collect potential pairs
+            m_ShapeProxyMap.erase(entityId); }
         m_ComponentStore->ForEachComponent<ColliderComponent>([&](EntityID entityId, ColliderComponent& collider) {
                 if (!m_ComponentStore->HasComponent<TransformComponent>(entityId))
                 return;
-
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-
-                // Update shape AABB in broad phase tree
-                UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation);
-                });
-
-        // Query broad phase for overlapping pairs using DynamicTree
-        // This is O(n log n) instead of O(n²) brute force
-        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
-        {
-            // Only query for dynamic bodies (static bodies don't initiate collision checks)
+                UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation); });
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap) {
             if (!m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId))
                 continue;
-
             const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
             if (body.isStatic)
                 continue;
-
-            // Get the fat AABB for this proxy
             const auto& fatAABB = m_BroadPhaseTree.GetFatAABB(proxyId);
-
-            // Query the tree for overlapping proxies
             BroadPhaseCallback callback;
             callback.system = this;
             callback.entityId = entityId;
-            m_BroadPhaseTree.Query(fatAABB, &callback);
-        }
-
+            m_BroadPhaseTree.Query(fatAABB, &callback); }
         m_Stats.broadPhasePairs = m_BroadPhasePairs.size();
-        
 #ifdef _DEBUG
         if (!m_BroadPhasePairs.empty()) {
-            std::cerr << "[PHYSICS] Broad phase found " << m_BroadPhasePairs.size() << " potential collision pairs\n";
-        }
-#endif
-    }
-
-    void PhysicsPipelineSystem::NarrowPhaseDetection()
-    {
+            std::cerr << "[PHYSICS] Broad phase found " << m_BroadPhasePairs.size() << " potential collision pairs\n"; }
+#endif }
+    void PhysicsPipelineSystem::NarrowPhaseDetection() {
         m_ContactManifolds.clear();
         m_ContactMap.clear();
-
-        // Clear world contacts for this frame
         if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
             auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
-            world.contactManifolds.clear();
-        }
-
-
-        // Test each broad phase pair for actual collision
-        for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs)
-        {
-            if (TestCollision(entityIdA, entityIdB))
-            {
+            world.contactManifolds.clear(); }
+        for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs) {
+            if (TestCollision(entityIdA, entityIdB)) {
                 ContactManifold manifold = GenerateManifold(entityIdA, entityIdB);
-                if (!manifold.points.empty())
-                {
+                if (!manifold.points.empty()) {
 #ifdef _DEBUG
                     std::cerr << "[PHYSICS] Collision detected between entities " 
                               << entityIdA << " and " << entityIdB 
                               << " with " << manifold.points.size() << " contact points\n";
 #endif
-
-                    // Store contact for constraint solving
                     uint64_t key = (static_cast<uint64_t>(std::min(entityIdA, entityIdB)) << 32) |
                         static_cast<uint64_t>(std::max(entityIdA, entityIdB));
                     m_ContactMap[key] = m_ContactManifolds.size();
                     m_ContactManifolds.push_back(std::move(manifold));
-
-                    // Also populate the world component for island manager and debug rendering
                     if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
                         auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
-                        world.contactManifolds.push_back(manifold); // Direct copy since types are identical
-                    }
-                }
-                else
-                {
+                        world.contactManifolds.push_back(manifold);   } }
+                else {
 #ifdef _DEBUG
                     std::cerr << "[PHYSICS] Collision detected but manifold generation failed for entities " 
                               << entityIdA << " and " << entityIdB << "\n";
-#endif
-                }
-            }
-        }
-
-        m_Stats.narrowPhaseContacts = m_ContactManifolds.size();
-
-    }
-
-    void PhysicsPipelineSystem::IslandDetection()
-    {
-        if (m_Config.useIslandSleeping)
-        {
+#endif } } }
+        m_Stats.narrowPhaseContacts = m_ContactManifolds.size(); }
+    void PhysicsPipelineSystem::IslandDetection() {
+        if (m_Config.useIslandSleeping) {
             m_IslandManager->UpdateIslands(Nyon::FIXED_TIMESTEP, m_ActiveEntities);
-            m_Stats.islandStats = m_IslandManager->GetStatistics();
-        }
-    }
-
-    void PhysicsPipelineSystem::ConstraintInitialization()
-    {
+            m_Stats.islandStats = m_IslandManager->GetStatistics(); } }
+    void PhysicsPipelineSystem::ConstraintInitialization() {
         m_VelocityConstraints.clear();
-
-        // Create velocity constraints from contact manifolds
-        for (const auto& manifold : m_ContactManifolds)
-        {
+        for (const auto& manifold : m_ContactManifolds) {
             VelocityConstraint vc;
             vc.normal = manifold.normal;
             vc.tangent = Math::Vector2{-manifold.normal.y, manifold.normal.x};
-            
-            // Convert ECS::ContactPoint to ContactPointConstraint (solver-only data)
             vc.points.reserve(manifold.points.size());
-            for (const auto& ecsPoint : manifold.points)
-            {
+            for (const auto& ecsPoint : manifold.points) {
                 ContactPointConstraint constraintPoint;
                 constraintPoint.position = ecsPoint.position;
                 constraintPoint.normal = ecsPoint.normal;
@@ -395,946 +199,466 @@ namespace Nyon::ECS
                 constraintPoint.tangentMass = ecsPoint.tangentMass;
                 constraintPoint.velocityBias = ecsPoint.velocityBias;
                 constraintPoint.featureId = ecsPoint.featureId;
-                vc.points.push_back(constraintPoint);
-            }
-
-            // Get solver indices
+                vc.points.push_back(constraintPoint); }
             auto itA = m_EntityToSolverIndex.find(manifold.entityIdA);
             auto itB = m_EntityToSolverIndex.find(manifold.entityIdB);
-
-            if (itA != m_EntityToSolverIndex.end() && itB != m_EntityToSolverIndex.end())
-            {
+            if (itA != m_EntityToSolverIndex.end() && itB != m_EntityToSolverIndex.end()) {
                 vc.indexA = itA->second;
                 vc.indexB = itB->second;
-
                 const auto& bodyA = m_SolverBodies[vc.indexA];
                 const auto& bodyB = m_SolverBodies[vc.indexB];
-
                 vc.invMassA = bodyA.invMass;
                 vc.invMassB = bodyB.invMass;
                 vc.invIA = bodyA.invInertia;
                 vc.invIB = bodyB.invInertia;
-
-                // === COMPUTE FRICTION AND RESTITUTION FROM MATERIALS ===
-                // Look up both colliders to get material properties
                 const auto& colliderA = m_ComponentStore->GetComponent<ColliderComponent>(manifold.entityIdA);
                 const auto& colliderB = m_ComponentStore->GetComponent<ColliderComponent>(manifold.entityIdB);
-
-                // Mix friction using geometric mean (standard approach)
                 vc.friction = std::sqrt(colliderA.material.friction * colliderB.material.friction);
-
-                // Mix restitution using maximum (standard approach)
                 vc.restitution = std::max(colliderA.material.restitution, colliderB.material.restitution);
-
-                // Precompute world centroids for this constraint (used by all points)
                 float initCosA = std::cos(bodyA.angle);
                 float initSinA = std::sin(bodyA.angle);
                 Math::Vector2 initWorldCentroidA = bodyA.position + Math::Vector2{
                     bodyA.localCenter.x * initCosA - bodyA.localCenter.y * initSinA,
-                    bodyA.localCenter.x * initSinA + bodyA.localCenter.y * initCosA
-                };
-
+                    bodyA.localCenter.x * initSinA + bodyA.localCenter.y * initCosA };
                 float initCosB = std::cos(bodyB.angle);
                 float initSinB = std::sin(bodyB.angle);
                 Math::Vector2 initWorldCentroidB = bodyB.position + Math::Vector2{
                     bodyB.localCenter.x * initCosB - bodyB.localCenter.y * initSinB,
-                    bodyB.localCenter.x * initSinB + bodyB.localCenter.y * initCosB
-                };
-
-                // Compute effective mass for each contact point
-                for (auto& point : vc.points)
-                {
-                    // Moment arms from body centers of mass to contact point
+                    bodyB.localCenter.x * initSinB + bodyB.localCenter.y * initCosB };
+                for (auto& point : vc.points) {
                     Math::Vector2 rA = point.position - initWorldCentroidA;
                     Math::Vector2 rB = point.position - initWorldCentroidB;
-
-                    // Cross products with normal (scalar, since 2D)
                     float rAcrossN = Math::Vector2::Cross(rA, vc.normal);
                     float rBcrossN = Math::Vector2::Cross(rB, vc.normal);
-
-                    // Effective mass = sum of translational and rotational contributions
                     float kNormal = vc.invMassA + vc.invMassB
                         + vc.invIA * rAcrossN * rAcrossN
                         + vc.invIB * rBcrossN * rBcrossN;
-
                     point.normalMass = (kNormal > 1e-6f) ? (1.0f / kNormal) : 0.0f;
-
-                    // Tangent mass (for friction)
                     float rAcrossT = Math::Vector2::Cross(rA, vc.tangent);
                     float rBcrossT = Math::Vector2::Cross(rB, vc.tangent);
                     float kTangent = vc.invMassA + vc.invMassB
                         + vc.invIA * rAcrossT * rAcrossT
                         + vc.invIB * rBcrossT * rBcrossT;
                     point.tangentMass = (kTangent > 1e-6f) ? (1.0f / kTangent) : 0.0f;
-
-                    // Compute velocity bias for restitution (bounce)
                     Math::Vector2 vA = bodyA.velocity;
                     Math::Vector2 vB = bodyB.velocity;
                     float wA = bodyA.angularVelocity;
                     float wB = bodyB.angularVelocity;
-
-                    // Relative velocity at contact point
                     Math::Vector2 relVel = vB + Math::Vector2::Cross(wB, rB)
                         - vA - Math::Vector2::Cross(wA, rA);
                     float vRel = Math::Vector2::Dot(relVel, vc.normal);
-
-                    // Use world restitution threshold instead of hardcoded value
                     float restitutionThreshold = 0.0f;
-                    if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
-                    {
-                        restitutionThreshold = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity).restitutionThreshold;
-                    }
-
-                    if (vRel < -restitutionThreshold)
-                    {
-                        point.velocityBias = -vc.restitution * vRel;
-                    }
-                    else
-                    {
-                        point.velocityBias = 0.0f;
-                    }
-
-                    // Restore cached impulses for warm starting
+                    if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
+                        restitutionThreshold = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity).restitutionThreshold; }
+                    if (vRel < -restitutionThreshold) {
+                        point.velocityBias = -vc.restitution * vRel; }
+                    else {
+                        point.velocityBias = 0.0f; }
                     uint64_t cacheKey = MakeImpulseCacheKey(manifold.entityIdA, manifold.entityIdB, point.featureId);
                     auto cacheIt = m_ImpulseCache.find(cacheKey);
-                    if (cacheIt != m_ImpulseCache.end())
-                    {
+                    if (cacheIt != m_ImpulseCache.end()) {
                         point.normalImpulse = cacheIt->second.normalImpulse;
-                        point.tangentImpulse = cacheIt->second.tangentImpulse;
-                    }
-                }
-
-                m_VelocityConstraints.push_back(vc);
-            }
-        }
-
-        m_Stats.activeConstraints = m_VelocityConstraints.size();
-    }
-
-    void PhysicsPipelineSystem::VelocitySolving()
-    {
-        // 1. Apply gravity and other external forces
-        for (auto& body : m_SolverBodies)
-        {
-            if (!body.isStatic && body.isAwake && m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
-            {
-                // Apply gravity as force: F = m * g
+                        point.tangentImpulse = cacheIt->second.tangentImpulse; } }
+                m_VelocityConstraints.push_back(vc); } }
+        m_Stats.activeConstraints = m_VelocityConstraints.size(); }
+    void PhysicsPipelineSystem::VelocitySolving() {
+        for (auto& body : m_SolverBodies) {
+            if (!body.isStatic && body.isAwake && m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
                 float mass = (body.invMass > 0.0f) ? 1.0f / body.invMass : 0.0f;
                 const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
-                body.force += world.gravity * mass;
-            }
-        }
-        
-        // 2. Integrate velocities from forces
+                body.force += world.gravity * mass; } }
         IntegrateVelocities(Nyon::FIXED_TIMESTEP);
-        
-        // 3. Warm start with this frame's post-integration velocities
-        if (m_Config.warmStarting)
-        {
-            WarmStartConstraints();
-        }
-        
-        // 4. Solve velocity constraints iteratively
-        for (int i = 0; i < m_Config.velocityIterations; ++i)
-        {
-            SolveVelocityConstraints();
-        }
-    }
-
-    void PhysicsPipelineSystem::PositionSolving()
-    {
-
-
+        if (m_Config.warmStarting) {
+            WarmStartConstraints(); }
+        for (int i = 0; i < m_Config.velocityIterations; ++i) {
+            SolveVelocityConstraints(); } }
+    void PhysicsPipelineSystem::PositionSolving() {
         IntegratePositions(Nyon::FIXED_TIMESTEP);
-
-        // Solve position constraints for stabilization
-        for (int i = 0; i < m_Config.positionIterations; ++i)
-        {
-
-            SolvePositionConstraints();
-        }
-
-        // Debug: Log corrected positions
-
-        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)3); ++i)
-        {
-            const auto& body = m_SolverBodies[i];
-
-        }
-    }
-
-    void PhysicsPipelineSystem::Integration()
-    {
-        // Update body components with solved velocities and positions
-        for (const auto& solverBody : m_SolverBodies)
-        {
-            if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(solverBody.entityId))
-            {
+        for (int i = 0; i < m_Config.positionIterations; ++i) {
+            SolvePositionConstraints(); }
+        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)3); ++i) {
+            const auto& body = m_SolverBodies[i]; } }
+    void PhysicsPipelineSystem::Integration() {
+        for (const auto& solverBody : m_SolverBodies) {
+            if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(solverBody.entityId)) {
                 auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(solverBody.entityId);
-
-                // === ENFORCE MOTION LOCKS ===
                 Math::Vector2 lockedVelocity = solverBody.velocity;
                 float lockedAngularVelocity = solverBody.angularVelocity;
-
                 if (body.motionLocks.lockTranslationX)
                     lockedVelocity.x = 0.0f;
                 if (body.motionLocks.lockTranslationY)
                     lockedVelocity.y = 0.0f;
                 if (body.motionLocks.lockRotation)
                     lockedAngularVelocity = 0.0f;
-
                 body.velocity = lockedVelocity;
-                body.angularVelocity = lockedAngularVelocity;
-
-                // Damping is already applied in ConstraintSolverSystem - no additional damping here
-            }
-        }
-    }
-
-    void PhysicsPipelineSystem::StoreImpulses()
-    {
-        // Store accumulated impulses for warm starting next frame
-        std::unordered_map<uint64_t, bool> activeKeys; // Track which contacts are still active
-
-        for (const auto& constraint : m_VelocityConstraints)
-        {
+                body.angularVelocity = lockedAngularVelocity; } } }
+    void PhysicsPipelineSystem::StoreImpulses() {
+        std::unordered_map<uint64_t, bool> activeKeys;  
+        for (const auto& constraint : m_VelocityConstraints) {
             uint32_t entityIdA = m_SolverBodies[constraint.indexA].entityId;
             uint32_t entityIdB = m_SolverBodies[constraint.indexB].entityId;
-
-            for (const auto& point : constraint.points)
-            {
-                // Create cache key from entity pair + feature ID
+            for (const auto& point : constraint.points) {
                 uint64_t cacheKey = MakeImpulseCacheKey(entityIdA, entityIdB, point.featureId);
-
-                // Store impulses
                 m_ImpulseCache[cacheKey] = {
                     point.normalImpulse,
-                    point.tangentImpulse
-                };
-
-                // Mark this key as active
-                activeKeys[cacheKey] = true;
-            }
-        }
-
-        // Evict stale cache entries (contacts that no longer exist)
-        // Only evict if the contact is not in the active set
+                    point.tangentImpulse };
+                activeKeys[cacheKey] = true; } }
         std::vector<uint64_t> keysToRemove;
-        for (const auto& [key, impulse] : m_ImpulseCache)
-        {
-            if (activeKeys.find(key) == activeKeys.end())
-            {
-                keysToRemove.push_back(key);
-            }
-        }
-
-        for (uint64_t key : keysToRemove)
-        {
-            m_ImpulseCache.erase(key);
-        }
-    }
-
-    void PhysicsPipelineSystem::UpdateSleeping()
-    {
+        for (const auto& [key, impulse] : m_ImpulseCache) {
+            if (activeKeys.find(key) == activeKeys.end()) {
+                keysToRemove.push_back(key); } }
+        for (uint64_t key : keysToRemove) {
+            m_ImpulseCache.erase(key); } }
+    void PhysicsPipelineSystem::UpdateSleeping() {
         if (!m_Config.useIslandSleeping)
             return;
-
-        // Update body sleeping states based on island manager
         m_ComponentStore->ForEachComponent<PhysicsBodyComponent>([&](EntityID entityId, PhysicsBodyComponent& body) {
                 if (body.isStatic)
                     return;
-
-                // Bodies that explicitly disallow sleeping should always remain awake.
-                if (!body.allowSleep)
-                {
+                if (!body.allowSleep) {
                     body.SetAwake(true);
                     if (m_IslandManager)
                         m_IslandManager->WakeIslandContaining(entityId);
-                    return;
-                }
-
-                body.isAwake = m_IslandManager->IsBodyAwake(entityId);
-                });
-
+                    return; }
+                body.isAwake = m_IslandManager->IsBodyAwake(entityId); });
         m_Stats.awakeBodies = m_Stats.islandStats.awakeBodies;
-        m_Stats.sleepingBodies = m_Stats.islandStats.sleepingBodies;
-    }
-
-    void PhysicsPipelineSystem::UpdateTransformsFromSolver()
-    {
-        // Update transform components from solver results
-        // ONLY update dynamic bodies - static bodies should NOT be overwritten!
-        for (const auto& solverBody : m_SolverBodies)
-        {
+        m_Stats.sleepingBodies = m_Stats.islandStats.sleepingBodies; }
+    void PhysicsPipelineSystem::UpdateTransformsFromSolver() {
+        for (const auto& solverBody : m_SolverBodies) {
             if (solverBody.isStatic)
-                continue;  // Skip static bodies - their transforms are set at creation time
-
-            if (m_ComponentStore->HasComponent<TransformComponent>(solverBody.entityId))
-            {
+                continue;   
+            if (m_ComponentStore->HasComponent<TransformComponent>(solverBody.entityId)) {
                 auto& transform = m_ComponentStore->GetComponent<TransformComponent>(solverBody.entityId);
-
-                // Get motion locks from physics body if it exists
                 bool hasLocks = false;
                 PhysicsBodyComponent::MotionLocks locks{};
-                if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(solverBody.entityId))
-                {
+                if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(solverBody.entityId)) {
                     const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(solverBody.entityId);
                     locks = body.motionLocks;
-                    hasLocks = true;
-                }
-
-                // ✅ Write back the pre-integration position for interpolation
+                    hasLocks = true; }
                 transform.previousPosition = solverBody.prevPosition;
                 transform.previousRotation = solverBody.prevAngle;
-
-                // Current (post-integration) state with motion locks enforced
                 Math::Vector2 lockedPosition = solverBody.position;
                 float lockedAngle = solverBody.angle;
-
-                if (hasLocks)
-                {
+                if (hasLocks) {
                     if (locks.lockTranslationX)
-                        lockedPosition.x = transform.position.x; // Keep previous X
+                        lockedPosition.x = transform.position.x;  
                     if (locks.lockTranslationY)
-                        lockedPosition.y = transform.position.y; // Keep previous Y
+                        lockedPosition.y = transform.position.y;  
                     if (locks.lockRotation)
-                        lockedAngle = transform.rotation; // Keep previous rotation
-                }
-
+                        lockedAngle = transform.rotation;   }
                 transform.position = lockedPosition;
-                transform.rotation = lockedAngle;
-            }
-        }
-
-        // Debug: Log positions every N frames
-
-        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)3); ++i)
-        {
-            const auto& body = m_SolverBodies[i];
-
-        }
-    }
-
-    // BroadPhaseCallback implementation
-    bool PhysicsPipelineSystem::BroadPhaseCallback::QueryCallback(uint32_t nodeId, uint32_t userData)
-    {
+                transform.rotation = lockedAngle; } }
+        for (size_t i = 0; i < std::min(m_SolverBodies.size(), (size_t)3); ++i) {
+            const auto& body = m_SolverBodies[i]; } }
+    bool PhysicsPipelineSystem::BroadPhaseCallback::QueryCallback(uint32_t nodeId, uint32_t userData) {
         uint32_t otherEntityId = userData;
-
-        // Avoid self-collision (only skip when both entities would generate the same pair)
-        if (otherEntityId == entityId)
-        {
-            return true;
-        }
-
-        // Check if both entities have colliders and are not filtered
+        if (otherEntityId == entityId) {
+            return true; }
         if (system->m_ComponentStore->HasComponent<ColliderComponent>(entityId) &&
-                system->m_ComponentStore->HasComponent<ColliderComponent>(otherEntityId))
-        {
+                system->m_ComponentStore->HasComponent<ColliderComponent>(otherEntityId)) {
             const auto& colliderA = system->m_ComponentStore->GetComponent<ColliderComponent>(entityId);
             const auto& colliderB = system->m_ComponentStore->GetComponent<ColliderComponent>(otherEntityId);
-
-            // Check filter settings
-            if (colliderA.filter.ShouldCollide(colliderB.filter))
-            {
+            if (colliderA.filter.ShouldCollide(colliderB.filter)) {
                 if (localPairs) {
-                    localPairs->emplace_back(entityId, otherEntityId);
-                } else {
-                    system->m_BroadPhasePairs.emplace_back(entityId, otherEntityId);
-                }
-            }
-        }
-
-        return true; // Continue querying
-    }
-
+                    localPairs->emplace_back(entityId, otherEntityId); } else {
+                    system->m_BroadPhasePairs.emplace_back(entityId, otherEntityId); } } }
+        return true;   }
     void PhysicsPipelineSystem::UpdateShapeAABB(uint32_t entityId, ColliderComponent* collider,
-            const Math::Vector2& position, float angle)
-    {
+            const Math::Vector2& position, float angle) {
         Math::Vector2 min, max;
         collider->CalculateAABB(position, angle, min, max);
-
         Physics::AABB aabb;
         aabb.lowerBound = {min.x, min.y};
         aabb.upperBound = {max.x, max.y};
-
-        // No manual padding - MoveProxy/CreateProxy will apply AABB_EXTENSION internally
-
-
         auto it = m_ShapeProxyMap.find(entityId);
-        if (it != m_ShapeProxyMap.end())
-        {
-            // Update existing proxy with velocity-based displacement hint
+        if (it != m_ShapeProxyMap.end()) {
             Math::Vector2 displacement = {0.0f, 0.0f};
             if (m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId)) {
                 const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
-                displacement = body.velocity * Nyon::FIXED_TIMESTEP;
-            }
-            m_BroadPhaseTree.MoveProxy(it->second, aabb, displacement);
-        }
-        else
-        {
-            // Create new proxy
+                displacement = body.velocity * Nyon::FIXED_TIMESTEP; }
+            m_BroadPhaseTree.MoveProxy(it->second, aabb, displacement); }
+        else {
             uint32_t proxyId = m_BroadPhaseTree.CreateProxy(aabb, entityId);
-            m_ShapeProxyMap[entityId] = proxyId;
-        }
-    }
-
-    bool PhysicsPipelineSystem::TestCollision(uint32_t entityIdA, uint32_t entityIdB)
-    {
-        // Simple AABB overlap test for now
+            m_ShapeProxyMap[entityId] = proxyId; } }
+    bool PhysicsPipelineSystem::TestCollision(uint32_t entityIdA, uint32_t entityIdB) {
         if (!m_ComponentStore->HasComponent<ColliderComponent>(entityIdA) ||
                 !m_ComponentStore->HasComponent<ColliderComponent>(entityIdB) ||
                 !m_ComponentStore->HasComponent<TransformComponent>(entityIdA) ||
-                !m_ComponentStore->HasComponent<TransformComponent>(entityIdB))
-        {
-            return false;
-        }
-
+                !m_ComponentStore->HasComponent<TransformComponent>(entityIdB)) {
+            return false; }
         const auto& colliderA = m_ComponentStore->GetComponent<ColliderComponent>(entityIdA);
         const auto& colliderB = m_ComponentStore->GetComponent<ColliderComponent>(entityIdB);
         const auto& transformA = m_ComponentStore->GetComponent<TransformComponent>(entityIdA);
         const auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(entityIdB);
-
         Math::Vector2 minA, maxA, minB, maxB;
         colliderA.CalculateAABB(transformA.position, transformA.rotation, minA, maxA);
         colliderB.CalculateAABB(transformB.position, transformB.rotation, minB, maxB);
-
-        // AABB overlap test
-        return !(minA.x >= maxB.x || maxA.x <= minB.x || minA.y >= maxB.y || maxA.y <= minB.y);
-    }
-
-    ECS::ContactManifold PhysicsPipelineSystem::GenerateManifold(uint32_t entityIdA, uint32_t entityIdB)
-    {
+        return !(minA.x >= maxB.x || maxA.x <= minB.x || minA.y >= maxB.y || maxA.y <= minB.y); }
+    ECS::ContactManifold PhysicsPipelineSystem::GenerateManifold(uint32_t entityIdA, uint32_t entityIdB) {
         ECS::ContactManifold manifold;
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
-
         if (!m_ComponentStore->HasComponent<ColliderComponent>(entityIdA) ||
                 !m_ComponentStore->HasComponent<ColliderComponent>(entityIdB) ||
                 !m_ComponentStore->HasComponent<TransformComponent>(entityIdA) ||
-                !m_ComponentStore->HasComponent<TransformComponent>(entityIdB))
-        {
-            return manifold;
-        }
-
+                !m_ComponentStore->HasComponent<TransformComponent>(entityIdB)) {
+            return manifold; }
         const auto& colliderA = m_ComponentStore->GetComponent<ColliderComponent>(entityIdA);
         const auto& colliderB = m_ComponentStore->GetComponent<ColliderComponent>(entityIdB);
         const auto& transformA = m_ComponentStore->GetComponent<TransformComponent>(entityIdA);
         const auto& transformB = m_ComponentStore->GetComponent<TransformComponent>(entityIdB);
-
-        // ManifoldGenerator now returns the canonical ECS::ContactManifold directly
-        // Get first shape from each entity (assuming single-shape entities)
         uint32_t shapeIdA = 0;
         uint32_t shapeIdB = 0;
-
         ECS::ContactManifold generatedManifold = Physics::ManifoldGenerator::GenerateManifold(
                 entityIdA, entityIdB,
                 shapeIdA, shapeIdB,
                 colliderA, colliderB,
                 transformA, transformB
                 );
-
-        return generatedManifold;
-    }
-
-    void PhysicsPipelineSystem::WarmStartConstraints()
-    {
-        // Warm starting with CLAMPED impulses to prevent explosions
-        // Only apply a fraction of the stored impulse to avoid instability
-        constexpr float WARM_START_FACTOR = 0.5f;  // Apply only 50% of stored impulse
-        
-        for (auto& constraint : m_VelocityConstraints)
-        {
+        return generatedManifold; }
+    void PhysicsPipelineSystem::WarmStartConstraints() {
+        constexpr float WARM_START_FACTOR = 0.5f;   
+        for (auto& constraint : m_VelocityConstraints) {
             const auto& bodyA = m_SolverBodies[constraint.indexA];
             const auto& bodyB = m_SolverBodies[constraint.indexB];
-
-            // Compute world centroids to be used as pivot points for angular velocity calculations
             float cosA = std::cos(bodyA.angle);
             float sinA = std::sin(bodyA.angle);
             Math::Vector2 worldCentroidA = bodyA.position + Math::Vector2{
                 bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
-                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
-            };
-
+                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA };
             float cosB = std::cos(bodyB.angle);
             float sinB = std::sin(bodyB.angle);
             Math::Vector2 worldCentroidB = bodyB.position + Math::Vector2{
                 bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
-                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
-            };
-
-            for (auto& point : constraint.points)
-            {
-                // Apply previous impulses WITH CLAMPING to prevent explosions
-                // Limit warm-start impulse to prevent energy injection
+                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB };
+            for (auto& point : constraint.points) {
                 float clampedNormalImpulse = point.normalImpulse * WARM_START_FACTOR;
                 float clampedTangentImpulse = point.tangentImpulse * WARM_START_FACTOR;
-                
-                // Additional safety: clamp to reasonable maximum based on body mass
-                float maxImpulse = 100.0f;  // Prevent extreme impulses
+                float maxImpulse = 100.0f;   
                 clampedNormalImpulse = std::clamp(clampedNormalImpulse, -maxImpulse, maxImpulse);
                 clampedTangentImpulse = std::clamp(clampedTangentImpulse, -maxImpulse, maxImpulse);
-                
                 Math::Vector2 P = constraint.normal * clampedNormalImpulse +
                     constraint.tangent * clampedTangentImpulse;
-
-                if (!bodyA.isStatic)
-                {
+                if (!bodyA.isStatic) {
                     m_SolverBodies[constraint.indexA].velocity -= P * constraint.invMassA;
                     m_SolverBodies[constraint.indexA].angularVelocity -=
-                        constraint.invIA * Math::Vector2::Cross(point.position - worldCentroidA, P);
-                }
-
-                if (!bodyB.isStatic)
-                {
+                        constraint.invIA * Math::Vector2::Cross(point.position - worldCentroidA, P); }
+                if (!bodyB.isStatic) {
                     m_SolverBodies[constraint.indexB].velocity += P * constraint.invMassB;
                     m_SolverBodies[constraint.indexB].angularVelocity +=
-                        constraint.invIB * Math::Vector2::Cross(point.position - worldCentroidB, P);
-                }
-            }
-        }
-    }
-
-    uint64_t PhysicsPipelineSystem::MakeImpulseCacheKey(uint32_t entityIdA, uint32_t entityIdB, uint32_t featureId) const
-    {
-        // Create a unique key from entity pair (order-independent) + feature ID
+                        constraint.invIB * Math::Vector2::Cross(point.position - worldCentroidB, P); } } } }
+    uint64_t PhysicsPipelineSystem::MakeImpulseCacheKey(uint32_t entityIdA, uint32_t entityIdB, uint32_t featureId) const {
         uint32_t minEntity = std::min(entityIdA, entityIdB);
         uint32_t maxEntity = std::max(entityIdA, entityIdB);
-
-        // Combine entity pair into 64-bit key, then XOR with feature ID
         uint64_t pairKey = (static_cast<uint64_t>(minEntity) << 32) | static_cast<uint64_t>(maxEntity);
-        return pairKey ^ (static_cast<uint64_t>(featureId) << 32);
-    }
-
-    void PhysicsPipelineSystem::SolveVelocityConstraints()
-    {
-        for (auto& constraint : m_VelocityConstraints)
-        {
+        return pairKey ^ (static_cast<uint64_t>(featureId) << 32); }
+    void PhysicsPipelineSystem::SolveVelocityConstraints() {
+        for (auto& constraint : m_VelocityConstraints) {
             auto& bodyA = m_SolverBodies[constraint.indexA];
             auto& bodyB = m_SolverBodies[constraint.indexB];
-
-            // Compute live world centroids for this iteration
             float cosA = std::cos(bodyA.angle);
             float sinA = std::sin(bodyA.angle);
             Math::Vector2 liveWorldCentroidA = bodyA.position + Math::Vector2{
                 bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
-                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
-            };
-
+                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA };
             float cosB = std::cos(bodyB.angle);
             float sinB = std::sin(bodyB.angle);
             Math::Vector2 liveWorldCentroidB = bodyB.position + Math::Vector2{
                 bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
-                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
-            };
-
-            for (auto& point : constraint.points)
-            {
-                // Recompute rA, rB from LIVE body centers of mass each iteration:
+                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB };
+            for (auto& point : constraint.points) {
                 Math::Vector2 rA = point.position - liveWorldCentroidA;
                 Math::Vector2 rB = point.position - liveWorldCentroidB;
-
-                // Use LIVE body velocities (not the stale snapshot):
                 Math::Vector2 dv = bodyB.velocity + Math::Vector2::Cross(bodyB.angularVelocity, rB)
                     - bodyA.velocity - Math::Vector2::Cross(bodyA.angularVelocity, rA);
-
-                // Normal impulse
                 float vn = Math::Vector2::Dot(dv, constraint.normal);
                 float impulse = -point.normalMass * (vn - point.velocityBias);
-
-                // Clamp impulse
                 float oldImpulse = point.normalImpulse;
                 point.normalImpulse = std::max(oldImpulse + impulse, 0.0f);
                 impulse = point.normalImpulse - oldImpulse;
-
-                // Apply impulse
                 Math::Vector2 P = constraint.normal * impulse;
-
-                if (!bodyA.isStatic)
-                {
+                if (!bodyA.isStatic) {
                     bodyA.velocity -= P * constraint.invMassA;
-                    bodyA.angularVelocity -= constraint.invIA * Math::Vector2::Cross(rA, P);
-                }
-
-                if (!bodyB.isStatic)
-                {
+                    bodyA.angularVelocity -= constraint.invIA * Math::Vector2::Cross(rA, P); }
+                if (!bodyB.isStatic) {
                     bodyB.velocity += P * constraint.invMassB;
-                    bodyB.angularVelocity += constraint.invIB * Math::Vector2::Cross(rB, P);
-                }
-
-                // --- Tangent (friction) solve ---
-                // Recompute relative velocity for tangent direction
+                    bodyB.angularVelocity += constraint.invIB * Math::Vector2::Cross(rB, P); }
                 Math::Vector2 dvTangent = bodyB.velocity + Math::Vector2::Cross(bodyB.angularVelocity, rB)
                     - bodyA.velocity - Math::Vector2::Cross(bodyA.angularVelocity, rA);
                 float vt = Math::Vector2::Dot(dvTangent, constraint.tangent);
                 float tangentImpulse = -point.tangentMass * vt;
-
-                // Friction cone clamp (Coulomb friction): |tangentImpulse| <= friction * normalImpulse
                 float maxFriction = constraint.friction * point.normalImpulse;
                 float oldTangentImpulse = point.tangentImpulse;
                 point.tangentImpulse = std::clamp(oldTangentImpulse + tangentImpulse,
                         -maxFriction, maxFriction);
                 tangentImpulse = point.tangentImpulse - oldTangentImpulse;
-
-                // Apply tangent impulse
                 Math::Vector2 Pt = constraint.tangent * tangentImpulse;
-                if (!bodyA.isStatic)
-                {
+                if (!bodyA.isStatic) {
                     bodyA.velocity -= Pt * constraint.invMassA;
-                    bodyA.angularVelocity -= constraint.invIA * Math::Vector2::Cross(rA, Pt);
-                }
-
-                if (!bodyB.isStatic)
-                {
+                    bodyA.angularVelocity -= constraint.invIA * Math::Vector2::Cross(rA, Pt); }
+                if (!bodyB.isStatic) {
                     bodyB.velocity += Pt * constraint.invMassB;
-                    bodyB.angularVelocity += constraint.invIB * Math::Vector2::Cross(rB, Pt);
-                }
-            }
-        }
-    }
-
-    void PhysicsPipelineSystem::SolvePositionConstraints()
-    {
+                    bodyB.angularVelocity += constraint.invIB * Math::Vector2::Cross(rB, Pt); } } } }
+    void PhysicsPipelineSystem::SolvePositionConstraints() {
         int correctionsApplied = 0;
-        for (const auto& constraint : m_VelocityConstraints)
-        {
+        for (const auto& constraint : m_VelocityConstraints) {
             auto& bodyA = m_SolverBodies[constraint.indexA];
             auto& bodyB = m_SolverBodies[constraint.indexB];
-
-            // Precompute world centroids for this position correction iteration
             float cosA = std::cos(bodyA.angle);
             float sinA = std::sin(bodyA.angle);
             Math::Vector2 worldCentroidA = bodyA.position + Math::Vector2{
                 bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
-                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
-            };
-
+                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA };
             float cosB = std::cos(bodyB.angle);
             float sinB = std::sin(bodyB.angle);
             Math::Vector2 worldCentroidB = bodyB.position + Math::Vector2{
                 bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
-                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
-            };
-
-            for (const auto& point : constraint.points)
-            {
-                if (point.separation < -m_Config.linearSlop)
-                {
+                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB };
+            for (const auto& point : constraint.points) {
+                if (point.separation < -m_Config.linearSlop) {
                     Math::Vector2 rA = point.position - worldCentroidA;
                     Math::Vector2 rB = point.position - worldCentroidB;
-
-                    // Position correction
                     float C = m_Config.baumgarte * (-point.separation - m_Config.linearSlop);
                     C = std::clamp(C, 0.0f, m_Config.maxLinearCorrection);
-
-                    // Calculate full effective mass including rotational inertia
                     float rAcrossN = Math::Vector2::Cross(rA, constraint.normal);
                     float rBcrossN = Math::Vector2::Cross(rB, constraint.normal);
-
                     float kNormal = constraint.invMassA + constraint.invMassB
                         + constraint.invIA * rAcrossN * rAcrossN
                         + constraint.invIB * rBcrossN * rBcrossN;
-
                     float mass = (kNormal > 1e-6f) ? 1.0f / kNormal : 0.0f;
-
                     Math::Vector2 P = constraint.normal * (C * mass);
-
-
-
-                    // ONLY move dynamic bodies - NEVER move static bodies!
-                    // Move each body based on its inverse mass (lighter bodies move more)
-                    if (!bodyA.isStatic && !bodyB.isStatic)
-                    {
-                        // Both dynamic - move both apart
+                    if (!bodyA.isStatic && !bodyB.isStatic) {
                         bodyA.position -= P * constraint.invMassA;
-                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);  // Angular correction
+                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);   
                         bodyB.position += P * constraint.invMassB;
-                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);  // Angular correction
-                        correctionsApplied++;
-                    }
-                    else if (!bodyA.isStatic)
-                    {
-                        // B is static - only move A away from B
+                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);   
+                        correctionsApplied++; }
+                    else if (!bodyA.isStatic) {
                         bodyA.position -= P * constraint.invMassA;
-                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);  // Angular correction
-                        correctionsApplied++;
-                    }
-                    else if (!bodyB.isStatic)
-                    {
-                        // A is static - only move B away from A
+                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);   
+                        correctionsApplied++; }
+                    else if (!bodyB.isStatic) {
                         bodyB.position += P * constraint.invMassB;
-                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);  // Angular correction
-                        correctionsApplied++;
-                    }
-                    // If both are static, don't move anything (shouldn't happen)
-                }
-            }
-        }
-
-    }
-
-    void PhysicsPipelineSystem::IntegrateVelocities(float dt)
-    {
-        IntegrateVelocities(dt, 0, m_SolverBodies.size());
-    }
-
-    void PhysicsPipelineSystem::IntegrateVelocities(float dt, size_t start, size_t end)
-    {
-        // Respect global/world speed limits if available
+                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);   
+                        correctionsApplied++; } } } } }
+    void PhysicsPipelineSystem::IntegrateVelocities(float dt) {
+        IntegrateVelocities(dt, 0, m_SolverBodies.size()); }
+    void PhysicsPipelineSystem::IntegrateVelocities(float dt, size_t start, size_t end) {
         float maxLinearSpeed = std::numeric_limits<float>::infinity();
         float maxAngularSpeed = std::numeric_limits<float>::infinity();
-        if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
-        {
+        if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
             const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
             maxLinearSpeed = world.maxLinearSpeed;
-            maxAngularSpeed = world.maxAngularSpeed;
-        }
-
-        for (size_t i = start; i < end; ++i)
-        {
+            maxAngularSpeed = world.maxAngularSpeed; }
+        for (size_t i = start; i < end; ++i) {
             auto& body = m_SolverBodies[i];
-            
             if (body.isStatic || !body.isAwake)
                 continue;
-
-            // Integrate linear velocity
             body.velocity += (body.force * body.invMass) * dt;
-
-            // Integrate angular velocity
             body.angularVelocity += (body.torque * body.invInertia) * dt;
-
-            // Apply damping — exponential decay for numerical stability
-            if (body.linearDamping > 0.0f)
-            {
-                body.velocity *= std::pow(1.0f - body.linearDamping, dt);
-            }
-            if (body.angularDamping > 0.0f)
-            {
-                body.angularVelocity *= std::pow(1.0f - body.angularDamping, dt);
-            }
-
-            // Clamp velocities to prevent excessive tunneling
+            if (body.linearDamping > 0.0f) {
+                body.velocity *= std::pow(1.0f - body.linearDamping, dt); }
+            if (body.angularDamping > 0.0f) {
+                body.angularVelocity *= std::pow(1.0f - body.angularDamping, dt); }
             float speed = body.velocity.Length();
-            if (speed > maxLinearSpeed && speed > 0.0f)
-            {
-                body.velocity = body.velocity * (maxLinearSpeed / speed);
-            }
+            if (speed > maxLinearSpeed && speed > 0.0f) {
+                body.velocity = body.velocity * (maxLinearSpeed / speed); }
             body.angularVelocity = std::clamp(body.angularVelocity, -maxAngularSpeed, maxAngularSpeed);
-
-            // Clear forces for next step
             body.force = Math::Vector2{0.0f, 0.0f};
-            body.torque = 0.0f;
-        }
-    }
-
-    void PhysicsPipelineSystem::IntegratePositions(float dt)
-    {
-        for (auto& body : m_SolverBodies)
-        {
+            body.torque = 0.0f; } }
+    void PhysicsPipelineSystem::IntegratePositions(float dt) {
+        for (auto& body : m_SolverBodies) {
             if (body.isStatic || !body.isAwake)
                 continue;
-
-            // Store previous position for interpolation
             body.prevPosition = body.position;
             body.prevAngle = body.angle;
-
-            // Integrate position
             body.position += body.velocity * dt;
-
-            // Integrate angle
-            body.angle += body.angularVelocity * dt;
-        }
-    }
-
-    void PhysicsPipelineSystem::ClearPersistentContacts()
-    {
-        // Mark all contacts as non-persistent for next frame
-        for (auto& manifold : m_ContactManifolds)
-        {
-            manifold.persisted = false;
-        }
-    }
-
-    // ========================================================================
-    // MULTI-THREADED PHYSICS PIPELINE
-    // ========================================================================
-
-    void PhysicsPipelineSystem::ParallelBroadPhase()
-    {
+            body.angle += body.angularVelocity * dt; } }
+    void PhysicsPipelineSystem::ClearPersistentContacts() {
+        for (auto& manifold : m_ContactManifolds) {
+            manifold.persisted = false; } }
+    void PhysicsPipelineSystem::ParallelBroadPhase() {
         m_BroadPhasePairs.clear();
-
-        // DON'T clear m_ShapeProxyMap - we need to preserve proxy IDs across frames
-        // Only remove proxies for entities that no longer have colliders
         std::vector<uint32_t> entitiesToRemove;
-        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
-        {
-            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId))
-            {
-                entitiesToRemove.push_back(entityId);
-            }
-        }
-
-        for (uint32_t entityId : entitiesToRemove)
-        {
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap) {
+            if (!m_ComponentStore->HasComponent<ColliderComponent>(entityId)) {
+                entitiesToRemove.push_back(entityId); } }
+        for (uint32_t entityId : entitiesToRemove) {
             uint32_t proxyId = m_ShapeProxyMap[entityId];
             m_BroadPhaseTree.DestroyProxy(proxyId);
-            m_ShapeProxyMap.erase(entityId);
-        }
-
-        // Update broad phase tree and collect potential pairs
+            m_ShapeProxyMap.erase(entityId); }
         m_ComponentStore->ForEachComponent<ColliderComponent>([&](EntityID entityId, ColliderComponent& collider) {
                 if (!m_ComponentStore->HasComponent<TransformComponent>(entityId))
                 return;
-
                 const auto& transform = m_ComponentStore->GetComponent<TransformComponent>(entityId);
-
-                // Update shape AABB in broad phase tree
-                UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation);
-                });
-
-        // Query the tree for overlapping proxies in parallel
+                UpdateShapeAABB(entityId, &collider, transform.position, transform.rotation); });
         std::vector<std::future<std::vector<std::pair<uint32_t, uint32_t>>>> futures;
-
-        for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
-        {
-            // Only query for dynamic bodies
+        for (const auto& [entityId, proxyId] : m_ShapeProxyMap) {
             if (!m_ComponentStore->HasComponent<PhysicsBodyComponent>(entityId))
                 continue;
-
             const auto& body = m_ComponentStore->GetComponent<PhysicsBodyComponent>(entityId);
             if (body.isStatic)
                 continue;
-
-            // Submit query task to thread pool
             futures.push_back(Utils::ThreadPool::Instance().Submit([this, entityId, proxyId]() -> std::vector<std::pair<uint32_t, uint32_t>> {
                 std::vector<std::pair<uint32_t, uint32_t>> localPairs;
                 const auto& fatAABB = m_BroadPhaseTree.GetFatAABB(proxyId);
-                
                 BroadPhaseCallback callback;
                 callback.system = this;
                 callback.entityId = entityId;
                 callback.localPairs = &localPairs;
-                
-                // Query will call QueryCallback which adds to localPairs
                 m_BroadPhaseTree.Query(fatAABB, &callback);
-                
-                return localPairs;
-            }));
-        }
-
-        // Collect results
-        for (auto& future : futures)
-        {
+                return localPairs; })); }
+        for (auto& future : futures) {
             auto localPairs = future.get();
-            m_BroadPhasePairs.insert(m_BroadPhasePairs.end(), localPairs.begin(), localPairs.end());
-        }
-
-        m_Stats.broadPhasePairs = m_BroadPhasePairs.size();
-    }
-
-    void PhysicsPipelineSystem::ParallelNarrowPhase()
-    {
+            m_BroadPhasePairs.insert(m_BroadPhasePairs.end(), localPairs.begin(), localPairs.end()); }
+        m_Stats.broadPhasePairs = m_BroadPhasePairs.size(); }
+    void PhysicsPipelineSystem::ParallelNarrowPhase() {
         m_ContactManifolds.clear();
         m_ContactMap.clear();
-
-        // Clear world contacts for this frame
         if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
             auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
-            world.contactManifolds.clear();
-        }
-
-        // Process collision pairs in parallel
+            world.contactManifolds.clear(); }
         std::vector<std::future<ECS::ContactManifold>> futures;
         std::mutex manifoldsMutex;
-
-        for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs)
-        {
+        for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs) {
             futures.push_back(Utils::ThreadPool::Instance().Submit([this, entityIdA, entityIdB]() -> ECS::ContactManifold {
                 ECS::ContactManifold manifold;
                 manifold.entityIdA = entityIdA;
                 manifold.entityIdB = entityIdB;
-
-                if (!TestCollision(entityIdA, entityIdB))
-                {
-                    return manifold; // Empty manifold
-                }
-
-                return GenerateManifold(entityIdA, entityIdB);
-            }));
-        }
-
-        // Collect results
-        for (auto& future : futures)
-        {
+                if (!TestCollision(entityIdA, entityIdB)) {
+                    return manifold;   }
+                return GenerateManifold(entityIdA, entityIdB); })); }
+        for (auto& future : futures) {
             ECS::ContactManifold manifold = future.get();
-            if (!manifold.points.empty())
-            {
+            if (!manifold.points.empty()) {
                 std::lock_guard<std::mutex> lock(manifoldsMutex);
-                
                 uint64_t key = (static_cast<uint64_t>(std::min(manifold.entityIdA, manifold.entityIdB)) << 32) |
                     static_cast<uint64_t>(std::max(manifold.entityIdA, manifold.entityIdB));
                 m_ContactMap[key] = m_ContactManifolds.size();
-                m_ContactManifolds.push_back(std::move(manifold));
-            }
-        }
-
-        m_Stats.narrowPhaseContacts = m_ContactManifolds.size();
-    }
-
-    void PhysicsPipelineSystem::ParallelVelocitySolving(float subStepDt)
-    {
-        // Apply gravity and integrate velocities (parallel)
+                m_ContactManifolds.push_back(std::move(manifold)); } }
+        m_Stats.narrowPhaseContacts = m_ContactManifolds.size(); }
+    void PhysicsPipelineSystem::ParallelVelocitySolving(float subStepDt) {
         std::vector<std::future<void>> futures;
         size_t batchSize = (m_SolverBodies.size() + m_NumThreads - 1) / m_NumThreads;
-
-        for (size_t t = 0; t < m_NumThreads; ++t)
-        {
+        for (size_t t = 0; t < m_NumThreads; ++t) {
             size_t start = t * batchSize;
             size_t end = std::min(start + batchSize, m_SolverBodies.size());
-            
             if (start >= m_SolverBodies.size()) break;
-
             futures.push_back(Utils::ThreadPool::Instance().Submit([this, start, end, subStepDt]() {
-                for (size_t i = start; i < end; ++i)
-                {
+                for (size_t i = start; i < end; ++i) {
                     auto& body = m_SolverBodies[i];
-                    if (!body.isStatic && body.isAwake && m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore)
-                    {
+                    if (!body.isStatic && body.isAwake && m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
                         float mass = (body.invMass > 0.0f) ? 1.0f / body.invMass : 0.0f;
                         const auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
-                        body.force += world.gravity * mass;
-                    }
-                }
-                IntegrateVelocities(subStepDt, start, end);
-            }));
-        }
-
-        for (auto& future : futures)
-        {
-            future.get();
-        }
-
-        // Warm start
-        if (m_Config.warmStarting)
-        {
-            WarmStartConstraints();
-        }
-
-        // Solve velocity constraints iteratively (parallel by constraint)
-        for (int i = 0; i < m_Config.velocityIterations; ++i)
-        {
-            SolveVelocityConstraints();
-        }
-    }
-
-    void PhysicsPipelineSystem::ParallelPositionSolving(float subStepDt)
-    {
+                        body.force += world.gravity * mass; } }
+                IntegrateVelocities(subStepDt, start, end); })); }
+        for (auto& future : futures) {
+            future.get(); }
+        if (m_Config.warmStarting) {
+            WarmStartConstraints(); }
+        for (int i = 0; i < m_Config.velocityIterations; ++i) {
+            SolveVelocityConstraints(); } }
+    void PhysicsPipelineSystem::ParallelPositionSolving(float subStepDt) {
         IntegratePositions(subStepDt);
-
-        // Solve position constraints iteratively
-        for (int i = 0; i < m_Config.positionIterations; ++i)
-        {
-            SolvePositionConstraints();
-        }
-    }
-}
+        for (int i = 0; i < m_Config.positionIterations; ++i) {
+            SolvePositionConstraints(); } } }
