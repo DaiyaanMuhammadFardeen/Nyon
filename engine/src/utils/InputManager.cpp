@@ -99,9 +99,9 @@ namespace Nyon::Utils
         if (key < 0 || key >= GLFW_KEY_LAST) {
             return false;
         }
-        // When no window is available, treat all keys as up (consistent with other methods)
+        // When no window is available, treat all keys as up (not pressed)
         if (s_Window == nullptr) {
-            return false;  // Changed from true to false for consistency
+            return true;
         }
         return !s_CurrentKeys[key];
     }

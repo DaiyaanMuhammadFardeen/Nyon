@@ -269,12 +269,12 @@ namespace Nyon::ECS
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 auto& container = *static_cast<ComponentContainer<T>*>(containerIt->second.get());
-                // Iterate using indexMap for O(1) access
-                for (const auto& [entityId, index] : container.indexMap)
+                // Iterate using entityIds and components vectors in parallel for deterministic order
+                for (size_t i = 0; i < container.entityIds.size(); ++i)
                 {
-                    if (container.activeFlags[index])
+                    if (container.activeFlags[i])
                     {
-                        func(entityId, container.components[index]);
+                        func(container.entityIds[i], container.components[i]);
                     }
                 }
             }
@@ -292,12 +292,12 @@ namespace Nyon::ECS
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
-                // Iterate using indexMap for O(1) access
-                for (const auto& [entityId, index] : container.indexMap)
+                // Iterate using entityIds and components vectors in parallel for deterministic order
+                for (size_t i = 0; i < container.entityIds.size(); ++i)
                 {
-                    if (container.activeFlags[index])
+                    if (container.activeFlags[i])
                     {
-                        func(entityId, container.components[index]);
+                        func(container.entityIds[i], container.components[i]);
                     }
                 }
             }

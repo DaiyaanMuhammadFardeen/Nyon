@@ -36,6 +36,8 @@ ThreadPool::~ThreadPool() {
 }
 
 void ThreadPool::WorkerThread() {
+    tls_IsWorkerThread = true;
+    
     while (true) {
         std::function<void()> task;
         {
@@ -61,6 +63,8 @@ void ThreadPool::WorkerThread() {
 }
 
 void ThreadPool::WaitAll() {
+    assert(!tls_IsWorkerThread && "WaitAll() must not be called from a worker thread - will cause deadlock!");
+    
     std::unique_lock<std::mutex> lock(m_QueueMutex);
     m_AllDoneCondition.wait(lock, [this] {
         return m_ActiveTasks == 0 && m_Tasks.empty();

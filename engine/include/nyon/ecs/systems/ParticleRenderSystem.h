@@ -18,12 +18,12 @@ public:
     void Update(float deltaTime) override;
     void Render(float alpha);  // Called during render phase
 
-    // Set the particles to render (called by the demo)
-    void SetParticles(const std::vector<Nyon::Particle>& particles);
+    // ECS-based - particles are entities with ParticleComponent
+    // No need for SetParticles/GetParticles anymore
 
 private:
     std::unique_ptr<Graphics::ParticleRenderer> m_ParticleRenderer;
-    std::vector<Nyon::Particle> m_Particles;
+    ComponentStore* m_ComponentStore = nullptr;  // Reference to component store
 };
 
 } // namespace ECS

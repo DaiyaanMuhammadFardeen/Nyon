@@ -8,6 +8,7 @@
 #include <functional>
 #include <future>
 #include <atomic>
+#include <cassert>
 
 namespace Nyon::Utils {
 
@@ -36,6 +37,9 @@ public:
 
     /**
      * @brief Wait for all tasks to complete
+     * 
+     * WARNING: Must NOT be called from a worker thread of this pool.
+     * Calling WaitAll() from within a task submitted to this pool will cause a deadlock.
      */
     void WaitAll();
 
@@ -76,6 +80,10 @@ private:
     std::condition_variable m_AllDoneCondition;
 
     static std::unique_ptr<ThreadPool> s_Instance;
+    
+    // Thread-local flag to detect if current thread is a worker thread
+    // Used to prevent deadlock when WaitAll() is called from within a task
+    inline static thread_local bool tls_IsWorkerThread = false;
 };
 
 // Template implementation must be in header
