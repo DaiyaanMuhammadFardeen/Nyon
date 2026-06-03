@@ -55,24 +55,13 @@ namespace Nyon::ECS
         
         // Render debug information directly
         if (m_DrawShapes) DrawShapes();
-        if (m_DrawJoints) DrawJoints();
-        if (m_DrawAABBs) DrawAABBs();
         if (m_DrawContacts) DrawContacts();
-        if (m_DrawCOM) DrawCenterOfMass();
-        if (m_DrawIslands) DrawIslands();
     }
     
-    void DebugRenderSystem::RenderDebugInfo()
-    {
-        // No-op - all rendering now happens directly in Update() via PhysicsDebugRenderer
-        // This method is kept for API compatibility but does nothing
-    }
-    
-    void DebugRenderSystem::SetFlags(bool drawShapes, bool drawJoints, bool drawAABBs, 
+    void DebugRenderSystem::SetFlags(bool drawShapes, bool drawAABBs, 
                                    bool drawContacts, bool drawCOM)
     {
         m_DrawShapes = drawShapes;
-        m_DrawJoints = drawJoints;
         m_DrawAABBs = drawAABBs;
         m_DrawContacts = drawContacts;
         m_DrawCOM = drawCOM;
@@ -107,6 +96,7 @@ namespace Nyon::ECS
                 ECS::TransformComponent renderTransform;
                 renderTransform.position = position;
                 renderTransform.rotation = angle;
+                renderTransform.scale = transform.scale;
                 
                 // Color based on body state
                 Math::Vector3 color = {0.0f, 1.0f, 0.0f}; // Green default
@@ -120,19 +110,6 @@ namespace Nyon::ECS
                 }
             }
         }
-    }
-    
-    void DebugRenderSystem::DrawJoints()
-    {
-        // Joints not implemented yet - joint solver is not available
-        // Set m_DrawJoints = false to disable until joint implementation is complete
-    }
-    
-    void DebugRenderSystem::DrawAABBs()
-    {
-        // AABBs are now drawn as part of DrawShapes when the flag is enabled
-        // This method is kept for compatibility but does nothing
-        // The PhysicsDebugRenderer handles AABB drawing in DrawCollider
     }
     
     void DebugRenderSystem::DrawContacts()
@@ -152,19 +129,6 @@ namespace Nyon::ECS
             
             m_DebugRenderer.DrawManifold(manifold);
         }
-    }
-    
-    void DebugRenderSystem::DrawCenterOfMass()
-    {
-        // Centers of mass are now drawn as part of DrawShapes when the flag is enabled
-        // This method is kept for compatibility but does nothing
-        // The PhysicsDebugRenderer handles CoM drawing in DrawCollider
-    }
-    
-    void DebugRenderSystem::DrawIslands()
-    {
-        // Islands not implemented yet - sleep/island system needs implementation
-        // Set m_DrawIslands = false to disable
     }
     
     void DebugRenderSystem::DrawCircleShape(const Math::Vector2& position, 
