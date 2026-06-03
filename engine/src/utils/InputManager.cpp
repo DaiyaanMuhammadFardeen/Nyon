@@ -103,7 +103,7 @@ namespace Nyon::Utils
         if (s_Window == nullptr) {
             return true;
         }
-        return !s_CurrentKeys[key];
+        return !s_CurrentKeys[key] && s_PreviousKeys[key];
     }
 
     bool InputManager::IsMousePressed(int button)
@@ -131,7 +131,7 @@ namespace Nyon::Utils
         if (s_Window == nullptr) {
             return true;
         }
-        return !s_CurrentMouseButtons[button];
+        return !s_CurrentMouseButtons[button] && s_PreviousMouseButtons[button];
     }
 
     void InputManager::GetMousePosition(double& x, double& y)
