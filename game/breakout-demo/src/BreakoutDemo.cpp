@@ -264,7 +264,7 @@ void BreakoutDemo::CreateBall()
     glfwGetWindowSize(GetWindow(), &width, &height);
     
     ECS::TransformComponent t;
-    t.position = { width / 2.0f, BRICK_START_Y - 100.0f };  // Start below brick area
+    t.position = { width / 2.0f, 100.0f };  // Start on paddle, near bottom
     t.previousPosition = t.position;
     t.rotation = 0.0f;
     t.previousRotation = 0.0f;
@@ -556,6 +556,8 @@ void BreakoutDemo::CheckBrickCollisions()
         
         if (manifold.points.empty())
             continue;
+        
+        std::cerr << "[DIAG]  Manifold: A=" << manifold.entityIdA << " B=" << manifold.entityIdB << " pts=" << manifold.points.size() << "\n";
         
         // Check if ball is involved in this collision
         bool isBallA = (manifold.entityIdA == m_BallEntity);

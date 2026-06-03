@@ -344,12 +344,6 @@ namespace Nyon::ECS
             ContactManifold manifold = GenerateManifold(entityIdA, entityIdB);
             if (!manifold.points.empty())
             {
-#ifdef _DEBUG
-                std::cerr << "[PHYSICS] Collision detected between entities " 
-                          << entityIdA << " and " << entityIdB 
-                          << " with " << manifold.points.size() << " contact points\n";
-#endif
-
                 // Store contact for constraint solving
                 uint64_t key = (static_cast<uint64_t>(std::min(entityIdA, entityIdB)) << 32) |
                     static_cast<uint64_t>(std::max(entityIdA, entityIdB));

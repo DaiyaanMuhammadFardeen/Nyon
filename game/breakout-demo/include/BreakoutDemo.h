@@ -56,7 +56,7 @@ private:
     static constexpr float PADDLE_SPEED      = 500.0f;
 
     static constexpr float BALL_RADIUS       = 10.0f;
-    static constexpr float BALL_SPEED        = 350.0f;
+    static constexpr float BALL_SPEED        = 250.0f;
 
     // Square brick configuration
     static constexpr float BRICK_SIZE        = 40.0f;
