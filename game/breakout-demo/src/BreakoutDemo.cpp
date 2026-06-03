@@ -31,9 +31,9 @@ void BreakoutDemo::OnECSStart()
     CreateWalls();
     CreatePaddle();
     CreateBall();
-    CreateBricks();
+    GenerateBricks();
     
-    std::cerr << "[BREAKOUT] Game initialized! Use Arrow Keys or Mouse to move paddle.\n";
+    std::cerr << "[BREAKOUT] Game initialized! Use Arrow Keys to move paddle.\n";
     std::cerr << "[BREAKOUT] Press SPACE to launch ball. Press R to restart.\n";
 }
 
@@ -306,40 +306,130 @@ void BreakoutDemo::CreateBall()
 }
 
 // ============================================================================
-//  CreateBricks
+//  GenerateBricks  –  random cohesive formation of square bricks
 // ============================================================================
-void BreakoutDemo::CreateBricks()
+void BreakoutDemo::GenerateBricks()
 {
     m_Bricks.clear();
-    
+
     int width, height;
     glfwGetWindowSize(GetWindow(), &width, &height);
-    
-    // Calculate brick dimensions to span entire screen width
-    float totalSpacing = (BRICK_COLS - 1) * BRICK_SPACING_X;
-    float totalBrickWidth = BRICK_COLS * BRICK_WIDTH;
-    float startX = (width - totalBrickWidth - totalSpacing) / 2.0f;
-    
-    // Ensure we don't go negative
-    startX = std::max(10.0f, startX);
-    
-    for (int row = 0; row < BRICK_ROWS; ++row)
+
+    // Prepare color palette
+    m_BrickColors = {
+        { 1.0f, 0.0f, 0.0f },  // Red
+        { 1.0f, 0.5f, 0.0f },  // Orange
+        { 1.0f, 1.0f, 0.0f },  // Yellow
+        { 0.0f, 1.0f, 0.0f },  // Green
+        { 0.0f, 0.5f, 1.0f },  // Blue
+        { 0.6f, 0.0f, 1.0f },  // Purple
+        { 1.0f, 0.0f, 0.5f },  // Pink
+    };
+
+    const float cellSize = BRICK_SIZE + BRICK_GAP;
+    const int gridCols = SHAPE_MAX_COLS;
+    const int gridRows = SHAPE_MAX_ROWS;
+
+    // Grid of placed cells
+    std::vector<std::vector<bool>> placed(gridRows, std::vector<bool>(gridCols, false));
+
+    // Target number of bricks, random per game
+    std::uniform_int_distribution<int> countDist(TARGET_BRICK_MIN, TARGET_BRICK_MAX);
+    int targetCount = countDist(m_Rng);
+
+    // Start from a random cell near the center
+    std::uniform_int_distribution<int> colDist(3, gridCols - 4);
+    std::uniform_int_distribution<int> rowDist(2, gridRows - 3);
+    int seedCol = colDist(m_Rng);
+    int seedRow = rowDist(m_Rng);
+
+    placed[seedRow][seedCol] = true;
+    int placedCount = 1;
+
+    // BFS flood fill: keep adding random neighbors until we reach target
+    std::uniform_int_distribution<int> dirDist(0, 3);
+    const int dirs[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
+
+    int attempts = 0;
+    while (placedCount < targetCount && attempts < targetCount * 10)
     {
-        for (int col = 0; col < BRICK_COLS; ++col)
+        ++attempts;
+
+        // Collect all placed cells with at least one free neighbor
+        std::vector<std::pair<int,int>> candidates;
+        for (int r = 0; r < gridRows; ++r)
         {
-            float x = startX + col * (BRICK_WIDTH + BRICK_SPACING_X) + BRICK_WIDTH / 2.0f;
-            float y = BRICK_START_Y + row * (BRICK_HEIGHT + BRICK_SPACING_Y);
-            CreateBrick(x, y, row, col);
+            for (int c = 0; c < gridCols; ++c)
+            {
+                if (!placed[r][c]) continue;
+                for (int d = 0; d < 4; ++d)
+                {
+                    int nr = r + dirs[d][0];
+                    int nc = c + dirs[d][1];
+                    if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !placed[nr][nc])
+                    {
+                        candidates.emplace_back(c, r);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (candidates.empty()) break;
+
+        // Pick a random placed cell that has a free neighbor
+        std::uniform_int_distribution<int> pickDist(0, static_cast<int>(candidates.size()) - 1);
+        auto [pc, pr] = candidates[pickDist(m_Rng)];
+
+        // Pick a random free neighbor
+        std::vector<std::pair<int,int>> freeNeighbors;
+        for (int d = 0; d < 4; ++d)
+        {
+            int nr = pr + dirs[d][0];
+            int nc = pc + dirs[d][1];
+            if (nr >= 0 && nr < gridRows && nc >= 0 && nc < gridCols && !placed[nr][nc])
+            {
+                freeNeighbors.emplace_back(nc, nr);
+            }
+        }
+        if (freeNeighbors.empty()) continue;
+
+        std::uniform_int_distribution<int> fnDist(0, static_cast<int>(freeNeighbors.size()) - 1);
+        auto [nc, nr] = freeNeighbors[fnDist(m_Rng)];
+        placed[nr][nc] = true;
+        ++placedCount;
+    }
+
+    // Compute world position for each placed cell
+    float totalWidth = static_cast<float>(gridCols) * cellSize;
+    float startX = (static_cast<float>(width) - totalWidth) / 2.0f;
+
+    // Shuffle color assignment for visual variety
+    std::vector<Math::Vector3> shuffledColors = m_BrickColors;
+    std::shuffle(shuffledColors.begin(), shuffledColors.end(), m_Rng);
+
+    int brickIndex = 0;
+    for (int r = 0; r < gridRows; ++r)
+    {
+        for (int c = 0; c < gridCols; ++c)
+        {
+            if (!placed[r][c]) continue;
+
+            float x = startX + static_cast<float>(c) * cellSize + BRICK_SIZE / 2.0f;
+            float y = BRICK_START_Y - static_cast<float>(r) * cellSize + BRICK_SIZE / 2.0f;
+            const auto& color = shuffledColors[brickIndex % shuffledColors.size()];
+            CreateBrick(x, y, color);
+            ++brickIndex;
         }
     }
-    
-    std::cerr << "[BREAKOUT] Created " << m_Bricks.size() << " bricks starting at x=" << startX << "\n";
+
+    std::cerr << "[BREAKOUT] Generated " << m_Bricks.size() << " bricks in cohesive shape\n";
 }
 
 // ============================================================================
-//  CreateBrick
+//  CreateBrick  –  create a single square brick entity
 // ============================================================================
-void BreakoutDemo::CreateBrick(float x, float y, int row, int col)
+void BreakoutDemo::CreateBrick(float x, float y, const Math::Vector3& color)
 {
     auto& entities = GetEntityManager();
     auto& cs       = GetComponentStore();
@@ -359,12 +449,13 @@ void BreakoutDemo::CreateBrick(float x, float y, int row, int col)
     body.isStatic = true;
     body.UpdateMassProperties();
 
-    // Collider
+    // Square collider
+    float half = BRICK_SIZE / 2.0f;
     ECS::ColliderComponent::PolygonShape brickShape({
-        { -BRICK_WIDTH / 2.0f, -BRICK_HEIGHT / 2.0f },
-        {  BRICK_WIDTH / 2.0f, -BRICK_HEIGHT / 2.0f },
-        {  BRICK_WIDTH / 2.0f,  BRICK_HEIGHT / 2.0f },
-        { -BRICK_WIDTH / 2.0f,  BRICK_HEIGHT / 2.0f }
+        { -half, -half },
+        {  half, -half },
+        {  half,  half },
+        { -half,  half }
     });
 
     ECS::ColliderComponent brickCollider(brickShape);
@@ -372,20 +463,9 @@ void BreakoutDemo::CreateBrick(float x, float y, int row, int col)
     brickCollider.material.restitution = 1.0f;
     brickCollider.material.density = 0.0f;
 
-    // Render with color based on row
-    Math::Vector3 color;
-    switch (row % 5)
-    {
-        case 0: color = { 1.0f, 0.0f, 0.0f }; break;  // Red
-        case 1: color = { 1.0f, 0.5f, 0.0f }; break;  // Orange
-        case 2: color = { 1.0f, 1.0f, 0.0f }; break;  // Yellow
-        case 3: color = { 0.0f, 1.0f, 0.0f }; break;  // Green
-        case 4: color = { 0.0f, 0.5f, 1.0f }; break;  // Blue
-        default: color = { 1.0f, 1.0f, 1.0f }; break;
-    }
-    
-    ECS::RenderComponent brickRender({ BRICK_WIDTH, BRICK_HEIGHT }, color);
-    brickRender.origin = { BRICK_WIDTH / 2.0f, BRICK_HEIGHT / 2.0f };
+    // Render
+    ECS::RenderComponent brickRender({ BRICK_SIZE, BRICK_SIZE }, color);
+    brickRender.origin = { half, half };
 
     cs.AddComponent(brickEntity, std::move(t));
     cs.AddComponent(brickEntity, std::move(body));
@@ -466,8 +546,6 @@ void BreakoutDemo::CheckBrickCollisions()
     
     const auto& world = cs.GetComponent<ECS::PhysicsWorldComponent>(worldEntities[0]);
     
-    std::cerr << "[BREAKOUT] Checking " << world.contactManifolds.size() << " manifolds, Ball=" << m_BallEntity << "\n";
-    
     // Track which bricks to destroy
     std::vector<ECS::EntityID> bricksToDestroy;
     
@@ -479,45 +557,33 @@ void BreakoutDemo::CheckBrickCollisions()
         if (manifold.points.empty())
             continue;
         
-        std::cerr << "[BREAKOUT] Manifold[" << i << "]: A=" << manifold.entityIdA 
-                  << " B=" << manifold.entityIdB << "\n";
-        
         // Check if ball is involved in this collision
         bool isBallA = (manifold.entityIdA == m_BallEntity);
         bool isBallB = (manifold.entityIdB == m_BallEntity);
         
-        if (!isBallA && !isBallB) {
-            std::cerr << "[BREAKOUT]   -> Not ball collision\n";
+        if (!isBallA && !isBallB)
             continue;
-        }
         
         // Get the other entity (the brick or wall)
         ECS::EntityID otherEntity = isBallA ? manifold.entityIdB : manifold.entityIdA;
-        
-        std::cerr << "[BREAKOUT]   -> Ball hit entity " << otherEntity << "\n";
         
         // Check if it's a brick
         auto it = std::find(m_Bricks.begin(), m_Bricks.end(), otherEntity);
         if (it != m_Bricks.end())
         {
-            std::cerr << "[BREAKOUT]   -> BRICK FOUND! Marking for destruction\n";
             // Brick hit - mark for destruction
             bricksToDestroy.push_back(otherEntity);
             m_Score += 10;  // 10 points per brick
-        } else {
-            std::cerr << "[BREAKOUT]   -> Not a brick (total bricks: " << m_Bricks.size() << ")\n";
         }
     }
     
     // Destroy marked bricks AFTER iterating (avoid iterator invalidation)
     if (!bricksToDestroy.empty())
     {
-        std::cerr << "[BREAKOUT] Destroying " << bricksToDestroy.size() << " bricks\n";
-        
         auto& entities = GetEntityManager();
         for (auto brickId : bricksToDestroy)
         {
-            entities.DestroyEntity(brickId);
+            entities.DestroyEntity(brickId, cs);
         }
         
         // Remove from tracking list
@@ -575,12 +641,12 @@ void BreakoutDemo::ResetGame()
     // Destroy all bricks
     for (auto brickId : m_Bricks)
     {
-        entities.DestroyEntity(brickId);
+        entities.DestroyEntity(brickId, cs);
     }
     m_Bricks.clear();
     
     // Recreate bricks
-    CreateBricks();
+    GenerateBricks();
     
     // Reset ball
     ResetBall();
