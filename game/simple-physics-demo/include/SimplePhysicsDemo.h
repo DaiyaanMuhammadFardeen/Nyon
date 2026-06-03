@@ -2,7 +2,6 @@
 
 #include "nyon/core/ECSApplication.h"
 #include "nyon/ecs/EntityManager.h"
-#include "nyon/ecs/components/BehaviorComponent.h"
 
 #include <random>
 
@@ -76,7 +75,6 @@ private:
     // Player movement configuration
     static constexpr float PLAYER_MOVE_SPEED = 300.0f;  // pixels per second
     static constexpr float PLAYER_JUMP_FORCE = 900.0f;  // impulse: 900/mass=450 pix/s vs 16 pix/step gravity
-    static constexpr float GRAVITY_SCALE     = 980.0f;  // gravity in pixels/s²
     
     // Despawn configuration
     static constexpr float DESPAWN_Y_THRESHOLD = -100.0f;  // pixels below screen bottom
