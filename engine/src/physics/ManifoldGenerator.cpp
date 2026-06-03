@@ -110,7 +110,9 @@ namespace Nyon::Physics
             return incidentFace;
         }
         
-        // Clip segment to line using Sutherland-Hodgman algorithm
+        // Clip incident edge segment against reference face boundaries.
+        // Keeps the portion of the incident edge that lies within the reference face's
+        // side planes (edge-direction extent) and is penetrating the reference face plane.
         inline void ClipSegmentToLine(std::vector<ECS::ContactPoint>& outContacts,
                                       const std::vector<Math::Vector2>& refVerts,
                                       const std::vector<Math::Vector2>& incVerts,
@@ -129,57 +131,50 @@ namespace Nyon::Physics
             Math::Vector2 iv1 = incVerts[incFaceIndex];
             Math::Vector2 iv2 = incVerts[(incFaceIndex + 1) % nInc];
 
-            // --- Side 1 clip (perpendicular to reference edge) ---
-            Math::Vector2 side1 = v2 - v1;
-            side1 = {-side1.y, side1.x};               // inward perpendicular
-            float offset1 = Dot(side1, v1);
+            // Reference edge direction (used as side plane normals).
+            // Side plane 1 at v1 keeps points at or ahead of v1 along edgeDir.
+            // Side plane 2 at v2 keeps points at or behind v2 along edgeDir.
+            Math::Vector2 edgeDir = v2 - v1;
+            float edgeLen = edgeDir.Length();
+            if (edgeLen < 1e-8f) return;
+            edgeDir = edgeDir * (1.0f / edgeLen);
 
-            float d1 = Dot(side1, iv1) - offset1;
-            float d2 = Dot(side1, iv2) - offset1;
+            float offset1 = Dot(edgeDir, v1);
+            float offset2 = Dot(-edgeDir, v2);
 
-            std::vector<Math::Vector2> clip;
-            if (d1 <= 0.0f) clip.push_back(iv1);
-            if (d1 * d2 < 0.0f && std::abs(d2 - d1) > 1e-6f)
+            // Clip the two incident vertices against both side planes
+            std::vector<Math::Vector2> clippingIn;
+            clippingIn.push_back(iv1);
+            clippingIn.push_back(iv2);
+
+            for (int pass = 0; pass < 2; ++pass)
             {
-                float t = d1 / (d1 - d2);
-                clip.push_back(iv1 + (iv2 - iv1) * t);
-            }
-            if (d2 <= 0.0f) clip.push_back(iv2);
+                Math::Vector2 clipNormal = (pass == 0) ? edgeDir : -edgeDir;
+                float clipOffset = (pass == 0) ? offset1 : offset2;
 
-            // --- Side 2 clip (opposite side of reference edge) ---
-            if (clip.empty())
-            {
-                COLLISION_DEBUG_LOG("      Clipped away by side planes");
-                return;
-            }
-
-            std::vector<Math::Vector2> finalClip;
-            Math::Vector2 side2 = v1 - v2;
-            side2 = {-side2.y, side2.x};
-            float offset2 = Dot(side2, v2);
-
-            if (clip.size() == 1)
-            {
-                float d = Dot(side2, clip[0]) - offset2;
-                if (d <= 0.0f) finalClip.push_back(clip[0]);
-            }
-            else // 2 points = clipped edge
-            {
-                float dA = Dot(side2, clip[0]) - offset2;
-                float dB = Dot(side2, clip[1]) - offset2;
-
-                if (dA <= 0.0f) finalClip.push_back(clip[0]);
-                if (dA * dB < 0.0f && std::abs(dB - dA) > 1e-6f)
+                std::vector<Math::Vector2> clippingOut;
+                for (size_t i = 0; i < clippingIn.size(); ++i)
                 {
-                    float t = dA / (dA - dB);
-                    finalClip.push_back(clip[0] + (clip[1] - clip[0]) * t);
+                    size_t j = (i + 1) % clippingIn.size();
+                    const auto& p1 = clippingIn[i];
+                    const auto& p2 = clippingIn[j];
+                    float d1 = Dot(clipNormal, p1) - clipOffset;
+                    float d2 = Dot(clipNormal, p2) - clipOffset;
+
+                    if (d1 >= 0.0f)
+                        clippingOut.push_back(p1);
+                    if (d1 * d2 < 0.0f && std::abs(d2 - d1) > 1e-6f)
+                    {
+                        float t = d1 / (d1 - d2);
+                        clippingOut.push_back(p1 + (p2 - p1) * t);
+                    }
                 }
-                if (dB <= 0.0f) finalClip.push_back(clip[1]);
+                clippingIn = std::move(clippingOut);
             }
 
             // --- Final clip against reference face plane ---
             float refOffset = Dot(normal, v1);
-            for (const auto& pt : finalClip)
+            for (const auto& pt : clippingIn)
             {
                 float sep = Dot(normal, pt) - refOffset;
                 if (sep <= 0.0f)                     // penetration or touching
@@ -470,6 +465,8 @@ namespace Nyon::Physics
             
             float overlap = std::min(maxA, maxB) - std::max(minA, minB);
             if (overlap < 0) return manifold; // Separating axis found
+
+            COLLISION_DEBUG_LOG("    SAT axis=A[" << i << "] (" << axis.x << "," << axis.y << ") overlap=" << overlap << " minA=" << minA << " maxA=" << maxA << " minB=" << minB << " maxB=" << maxB);
             
             if (overlap < minOverlap)
             {
@@ -490,11 +487,13 @@ namespace Nyon::Physics
             float overlap = std::min(maxA, maxB) - std::max(minA, minB);
             if (overlap < 0) return manifold; // Separating axis found
             
+            COLLISION_DEBUG_LOG("    SAT axis=B[" << i << "] (" << axis.x << "," << axis.y << ") overlap=" << overlap << " minA=" << minA << " maxA=" << maxA << " minB=" << minB << " maxB=" << maxB);
+
             if (overlap < minOverlap)
             {
                 minOverlap = overlap;
                 separatingAxis = axis;
-                referenceFace = static_cast<int>(i) + static_cast<int>(normalsA.size());  // Fixed: use normalsA.size() instead of vertsA.size()
+                referenceFace = static_cast<int>(i) + static_cast<int>(normalsA.size());
             }
         }
         

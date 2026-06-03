@@ -43,9 +43,9 @@ void TowerStackDemo::OnECSStart()
     CreateWorld();
     CreateCamera();
     CreatePlatform();
-    SpawnActiveBlock();
 
     m_HighestBlockY = PLATFORM_Y + PLATFORM_HEIGHT / 2.0f;
+    SpawnActiveBlock();
 }
 
 // ============================================================================
@@ -399,8 +399,8 @@ void TowerStackDemo::OnECSFixedUpdate(float deltaTime)
                     m_SlideDirection = 1.0f;
                 }
 
-                // Keep the block at the correct Y (above the tower)
-                float targetY = m_HighestBlockY + BLOCK_HEIGHT * 3.0f + 30.0f;
+                // Keep the block at the correct Y (just above the tower)
+                float targetY = m_HighestBlockY + BLOCK_HEIGHT + 1.0f;
                 t.position.y = targetY;
                 t.previousPosition.y = targetY;
             }
