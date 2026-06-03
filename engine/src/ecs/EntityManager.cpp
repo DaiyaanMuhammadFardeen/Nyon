@@ -1,4 +1,5 @@
 #include "nyon/ecs/EntityManager.h"
+#include "nyon/ecs/ComponentStore.h"
 
 namespace Nyon::ECS
 {
@@ -43,6 +44,12 @@ namespace Nyon::ECS
         
         // Add to free IDs for reuse
         m_FreeIDs.push_back(entity);
+    }
+    
+    void EntityManager::DestroyEntity(EntityID entity, ComponentStore& componentStore)
+    {
+        componentStore.RemoveAllComponents(entity);
+        DestroyEntity(entity);
     }
     
     bool EntityManager::IsEntityValid(EntityID entity) const
