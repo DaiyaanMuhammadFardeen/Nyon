@@ -61,7 +61,7 @@ private:
     // Square brick configuration
     static constexpr float BRICK_SIZE        = 40.0f;
     static constexpr float BRICK_GAP         = 4.0f;
-    static constexpr float BRICK_START_Y     = 280.0f;
+    static constexpr float BRICK_START_Y     = 600.0f;
 
     // Random shape generation
     static constexpr int   SHAPE_MAX_COLS    = 14;
