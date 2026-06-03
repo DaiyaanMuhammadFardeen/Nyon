@@ -59,7 +59,7 @@ namespace Nyon
         // Initialize DebugRenderSystem for physics debug overlay
         m_DebugRenderSystem = std::make_unique<ECS::DebugRenderSystem>();
         m_DebugRenderSystem->Initialize(m_EntityManager, m_ComponentStore);
-        m_DebugRenderSystem->SetFlags(true, false, false, false, false);  // Only draw shapes by default
+        m_DebugRenderSystem->SetFlags(true, false, false, false);  // Only draw shapes by default
         
         m_ECSInitialized = true;
         
@@ -82,12 +82,9 @@ namespace Nyon
             }
             f1PrevState = f1CurrState;
             
-            // Update debug render system if enabled
-            if (m_DebugOverlayEnabled && m_DebugRenderSystem) {
-                m_DebugRenderSystem->Update(deltaTime);
-            }
-            
             // Update only non-render ECS systems (physics, input, etc.)
+            // DebugRenderSystem::Update() is called during OnInterpolateAndRender so that it draws
+            // after RenderSystem::BeginScene, ensuring its shapes are not wiped by camera setup.
             NYON_DEBUG_LOG("[DEBUG] Calling SystemManager.Update() - should update PhysicsPipelineSystem");
             m_SystemManager.Update(deltaTime);
             
@@ -107,13 +104,18 @@ namespace Nyon
         {
             // Pass interpolation alpha to RenderSystem for smooth rendering
             m_RenderSystem->SetInterpolationAlpha(alpha);
-            // Update render system with interpolation
+            // Update render system with interpolation (BeginScene + draw entities + EndScene)
             m_RenderSystem->Update(0.0f); // Delta time not used in rendering
             
-            // Render debug overlay if enabled
+            // Render debug overlay if enabled in a separate render pass
             if (m_DebugOverlayEnabled && m_DebugRenderSystem) {
                 m_DebugRenderSystem->SetInterpolationAlpha(alpha);
-                m_DebugRenderSystem->RenderDebugInfo();
+                
+                // Start a new render pass for debug shapes.
+                // Use the currently active camera from the main render pass.
+                Graphics::Renderer2D::BeginScene(Graphics::Renderer2D::GetActiveCamera());
+                m_DebugRenderSystem->Update(0.0f);
+                Graphics::Renderer2D::EndScene();
             }
 
             // Render particles if particle render system exists
