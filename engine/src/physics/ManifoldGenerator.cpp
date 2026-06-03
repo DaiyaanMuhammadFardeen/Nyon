@@ -259,15 +259,25 @@ namespace Nyon::Physics
             COLLISION_DEBUG_LOG("  -> Circle-Polygon collision");
             if (swapped)
             {
-                return CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
-                                    colliderB.GetCircle(), colliderA.GetPolygon(),
-                                    transformB, transformA, true, manifold);
+                auto result = CirclePolygon(entityIdB, entityIdA, shapeIdB, shapeIdA,
+                                           colliderB.GetCircle(), colliderA.GetPolygon(),
+                                           transformB, transformA, manifold);
+                // When swapped, the result has entityIdA=circle (original B) and entityIdB=polygon (original A),
+                // with normal pointing circle→polygon. The manifold must use the original entity order
+                // (polygon, circle) with normal pointing polygon→circle.
+                std::swap(result.entityIdA, result.entityIdB);
+                result.normal = -result.normal;
+                result.localNormal = -result.localNormal;
+                for (auto& cp : result.points) {
+                    cp.normal = -cp.normal;
+                }
+                return result;
             }
             else
             {
                 return CirclePolygon(entityIdA, entityIdB, shapeIdA, shapeIdB,
                                     colliderA.GetCircle(), colliderB.GetPolygon(),
-                                    transformA, transformB, false, manifold);
+                                    transformA, transformB, manifold);
             }
         }
         
@@ -340,21 +350,17 @@ namespace Nyon::Physics
     }
 
     ECS::ContactManifold ManifoldGenerator::CirclePolygon(uint32_t entityIdA,
-                                                          uint32_t entityIdB,
-                                                          uint32_t shapeIdA,
-                                                          uint32_t shapeIdB,
-                                                          const ColliderComponent::CircleShape& circle,
-                                                          const ColliderComponent::PolygonShape& polygon,
-                                                          const TransformComponent& circleTransform,
-                                                          const TransformComponent& polyTransform,
-                                                          bool flipNormal,
-                                                          ECS::ContactManifold& manifold)
+                                                           uint32_t entityIdB,
+                                                           uint32_t shapeIdA,
+                                                           uint32_t shapeIdB,
+                                                           const ColliderComponent::CircleShape& circle,
+                                                           const ColliderComponent::PolygonShape& polygon,
+                                                           const TransformComponent& circleTransform,
+                                                           const TransformComponent& polyTransform,
+                                                           ECS::ContactManifold& manifold)
     {
         manifold.touching = false;
-        manifold.entityIdA = entityIdA;
-        manifold.entityIdB = entityIdB;
-        manifold.shapeIdA = shapeIdA;
-        manifold.shapeIdB = shapeIdB;
+        // Entity IDs are set by GenerateManifold, do not overwrite them here.
 
         Math::Vector2 center;
         ComputeCircleCenters(circle, circleTransform, center);
@@ -392,20 +398,13 @@ namespace Nyon::Physics
         // normal should point from A → B (circle → polygon). Flip the polygon
         // normal to enforce that convention.
         Math::Vector2 polyNormal = normals[bestIndex];
-        Math::Vector2 normal = {-polyNormal.x, -polyNormal.y};
-        
-        // If flipNormal is true, the entities were swapped during dispatch.
-        // We need to flip the normal back to match the original entity ordering.
-        if (flipNormal)
-        {
-            normal = -normal;
-        }
+        Math::Vector2 normal = -polyNormal;
         
         float penetration = circle.radius - maxSeparation;
         
-        // Contact point is the circle center projected back towards the polygon
-        // along the opposite of the manifold normal.
-        Math::Vector2 contactPoint = center - normal * (circle.radius - 0.5f * penetration);
+        // Contact point is the circle center projected along the manifold normal
+        // toward the polygon (from A→B convention: normal points from circle toward polygon).
+        Math::Vector2 contactPoint = center + normal * (circle.radius - 0.5f * penetration);
         
         ECS::ContactPoint cp{};
         cp.position = contactPoint;
@@ -426,16 +425,6 @@ namespace Nyon::Physics
         manifold.localNormal = invRotA;
         Math::Vector2 localContact = Rotate(contactPoint - circleTransform.position, -circleTransform.rotation);
         manifold.localPoint = localContact;
-        
-        // If flipNormal is true, we also need to flip local normal and contact point normals
-        if (flipNormal)
-        {
-            manifold.localNormal = -manifold.localNormal;
-            for (auto& cp : manifold.points)
-            {
-                cp.normal = -cp.normal;
-            }
-        }
         
         manifold.touching = true;
 
@@ -525,11 +514,18 @@ namespace Nyon::Physics
         else
         {
             // Reference face is on polygon B, find incident face on A
-            int incidentFace = FindIncidentFace(normalsA, -separatingAxis);  // Fixed: was +separatingAxis
-            int refFace = referenceFace - static_cast<int>(normalsA.size());  // Fixed: use normalsA.size() for correct decode
+            int incidentFace = FindIncidentFace(normalsA, -separatingAxis);
+            int refFace = referenceFace - static_cast<int>(normalsA.size());
             COLLISION_DEBUG_LOG("    Reference face on B (index=" << refFace << "), incident face on A (index=" << incidentFace << ")");
-            ClipSegmentToLine(manifold.points, vertsB, vertsA, refFace, incidentFace, -separatingAxis, minOverlap);
-            // Flip normal direction
+            // Pass separatingAxis (B's outward normal) to ClipSegmentToLine so it keeps
+            // points inside B (penetrating) rather than outside B.
+            ClipSegmentToLine(manifold.points, vertsB, vertsA, refFace, incidentFace, separatingAxis, minOverlap);
+            // ClipSegmentToLine sets cp.normal = separatingAxis (B's outward).
+            // Convention requires normal from A to B = -separatingAxis.
+            for (auto& cp : manifold.points) {
+                cp.normal = -separatingAxis;
+                cp.separation = -cp.separation;
+            }
             manifold.normal = -separatingAxis;
         }
         
@@ -570,10 +566,10 @@ namespace Nyon::Physics
         {
             COLLISION_DEBUG_LOG("  [PolygonPolygon] No contact points generated (clipping failed). Using fallback contact.");
 
-            // Fallback: generate a single contact point at the midpoint between bodies.
-            // This ensures the solver has something to resolve even if clipping fails.
+            // Fallback: generate a single contact point at the midpoint between shape centroids.
+            // This is more accurate than using raw body positions for offset polygons.
             ECS::ContactPoint cp{};
-            cp.position = (transformA.position + transformB.position) * 0.5f;
+            cp.position = (centroidA + centroidB) * 0.5f;
             cp.normal = manifold.normal;
             cp.separation = -minOverlap;
             cp.normalImpulse = 0.0f;
@@ -752,26 +748,26 @@ namespace Nyon::Physics
             Math::Vector2 delta = p - closestOnSeg;
             float dist = delta.Length();
             
-            // Check if vertex is inside capsule
-            float separation = dist - capsule.radius;
-            if (separation < minSeparation || closestVertexIndex == -1)
-            {
-                minSeparation = separation;
-                closestVertexIndex = static_cast<int>(i);
-                
-                // Normal points from capsule to polygon
-                if (dist > 1e-6f)
+                // Check if vertex is inside capsule
+                float separation = dist - capsule.radius;
+                if (separation < minSeparation || closestVertexIndex == -1)
                 {
-                    normal = Normalize(delta);
-                }
-                else
-                {
-                    // Vertex is at capsule center - use perpendicular to segment
-                    normal = Normalize(Math::Vector2{-segDir.y, segDir.x});
-                }
-                
-                // Contact point on capsule surface
-                contactPoint = closestOnSeg + normal * capsule.radius;
+                    minSeparation = separation;
+                    closestVertexIndex = static_cast<int>(i);
+                    
+                    // Normal points from polygon (A) to capsule (B), i.e., opposite to delta.
+                    if (dist > 1e-6f)
+                    {
+                        normal = -Normalize(delta);
+                    }
+                    else
+                    {
+                        // Vertex is at capsule center - use perpendicular to segment
+                        normal = -Normalize(Math::Vector2{-segDir.y, segDir.x});
+                    }
+                    
+                    // Contact point on polygon vertex (the colliding point on body A)
+                    contactPoint = p;
             }
         }
         
@@ -815,11 +811,14 @@ namespace Nyon::Physics
                     }
                     else
                     {
-                        // Use polygon edge normal
+                        // Capsule endpoint is exactly on polygon edge.
+                        // Use polygon edge outward normal.
                         Math::Vector2 edgeNormal{-edgeDir.y, edgeDir.x};
                         normal = Normalize(edgeNormal);
-                        // Ensure normal points toward capsule
-                        if (Dot(normal, delta) < 0.0f)
+                        // Determine outward direction using polygon centroid (which is always inside).
+                        Math::Vector2 centroid = transformA.position + Rotate(polygon.centroid, transformA.rotation);
+                        // If the edge normal points toward the centroid, flip to point outward (A→B).
+                        if (Dot(normal, centroid - closestOnEdge) > 0.0f)
                             normal = -normal;
                     }
                     
@@ -927,8 +926,30 @@ namespace Nyon::Physics
         }
         else
         {
-            s = std::clamp((b * e - c * d) / denom, 0.0f, 1.0f);
-            t = std::clamp((a * e - b * d) / denom, 0.0f, 1.0f);
+            // Compute unconstrained closest-point parameters
+            s = (b * e - c * d) / denom;
+            t = (a * e - b * d) / denom;
+            
+            // Clamp with recomputation to handle parameter coupling.
+            // When one parameter is clamped, we must recompute the other
+            // given the fixed value to find the correct closest point on the boundary.
+            if (s < 0.0f) {
+                s = 0.0f;
+                t = e / c;
+            } else if (s > 1.0f) {
+                s = 1.0f;
+                t = (e + b) / c;
+            }
+            t = std::clamp(t, 0.0f, 1.0f);
+            
+            if (t < 0.0f) {
+                t = 0.0f;
+                s = -d / a;
+            } else if (t > 1.0f) {
+                t = 1.0f;
+                s = (b - d) / a;
+            }
+            s = std::clamp(s, 0.0f, 1.0f);
         }
         
         Math::Vector2 closestA = a1 + d1 * s;
@@ -1040,22 +1061,73 @@ namespace Nyon::Physics
                                                              const TransformComponent& transformB,
                                                              ECS::ContactManifold& manifold)
     {
-        // Segments are zero-thickness edges (or thin if radius > 0)
-        // Segment collisions involve:
-        // 1. Point-line distance tests for endpoints
-        // 2. Line-line intersection for crossing segments
-        // 3. Special handling for endpoint contacts
-        
         manifold.touching = false;
         manifold.entityIdA = entityIdA;
         manifold.entityIdB = entityIdB;
         manifold.shapeIdA = shapeIdA;
         manifold.shapeIdB = shapeIdB;
-        
-        // TODO: Implement full segment collision detection
-        // Segments typically collide with circles and polygons
-        // Segment-segment collision is rare and can be handled as degenerate polygon
-        
+
+        using ST = ColliderComponent::ShapeType;
+        ST tA = colliderA.GetType();
+        ST tB = colliderB.GetType();
+
+        // Identify which collider is the segment
+        const ColliderComponent* segColl = (tA == ST::Segment) ? &colliderA : &colliderB;
+        const ColliderComponent* otherColl = (tA == ST::Segment) ? &colliderB : &colliderA;
+        const TransformComponent* segTrans = (tA == ST::Segment) ? &transformA : &transformB;
+        const TransformComponent* otherTrans = (tA == ST::Segment) ? &transformB : &transformA;
+        uint32_t segEnt = (tA == ST::Segment) ? entityIdA : entityIdB;
+        uint32_t otherEnt = (tA == ST::Segment) ? entityIdB : entityIdA;
+        uint32_t segShape = (tA == ST::Segment) ? shapeIdA : shapeIdB;
+        uint32_t otherShape = (tA == ST::Segment) ? shapeIdB : shapeIdA;
+
+        // Build a temporary CapsuleShape from the segment (same endpoints, same radius)
+        ColliderComponent::CapsuleShape tempCap;
+        tempCap.center1 = segColl->GetSegment().point1;
+        tempCap.center2 = segColl->GetSegment().point2;
+        tempCap.radius = segColl->GetSegment().radius;
+
+        // Build a temporary ColliderComponent wrapping the capsule
+        ColliderComponent tempCapColl(tempCap);
+        tempCapColl.material = segColl->material;
+
+        ST otherType = otherColl->GetType();
+
+        // Segment vs Circle
+        if (otherType == ST::Circle)
+        {
+            return CapsuleCollision(segEnt, otherEnt, segShape, otherShape,
+                                   tempCapColl, *otherColl, *segTrans, *otherTrans, manifold);
+        }
+
+        // Segment vs Polygon
+        if (otherType == ST::Polygon)
+        {
+            return CapsuleCollision(segEnt, otherEnt, segShape, otherShape,
+                                   tempCapColl, *otherColl, *segTrans, *otherTrans, manifold);
+        }
+
+        // Segment vs Capsule — delegate to CapsuleCapsule
+        if (otherType == ST::Capsule)
+        {
+            return CapsuleCapsule(segEnt, otherEnt, segShape, otherShape,
+                                 tempCapColl, *otherColl, *segTrans, *otherTrans, manifold);
+        }
+
+        // Segment vs Segment — treat both as capsules
+        if (otherType == ST::Segment)
+        {
+            ColliderComponent::CapsuleShape tempCapB;
+            tempCapB.center1 = otherColl->GetSegment().point1;
+            tempCapB.center2 = otherColl->GetSegment().point2;
+            tempCapB.radius = otherColl->GetSegment().radius;
+            ColliderComponent tempCapCollB(tempCapB);
+            tempCapCollB.material = otherColl->material;
+
+            return CapsuleCapsule(segEnt, otherEnt, segShape, otherShape,
+                                 tempCapColl, tempCapCollB, *segTrans, *otherTrans, manifold);
+        }
+
         return manifold;
     }
 }
