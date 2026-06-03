@@ -25,8 +25,15 @@ namespace Nyon::ECS
         // Update camera follow logic
         UpdateCameraFollow(deltaTime);
         
-        // Sync with renderer
-        SyncWithRenderer(1280.0f, 720.0f); // Default dimensions, will be updated by application
+        // Get actual window dimensions from the application
+        int width = 1280, height = 720;
+        try {
+            GLFWwindow* window = Nyon::Application::Get().GetWindow();
+            if (window) glfwGetFramebufferSize(window, &width, &height);
+        } catch (...) {}
+        
+        // Sync with renderer using actual window dimensions
+        SyncWithRenderer(static_cast<float>(width), static_cast<float>(height));
     }
     
     const CameraComponent* CameraSystem::GetActiveCamera() const
@@ -112,7 +119,9 @@ namespace Nyon::ECS
         // Smooth follow using lerp
         if (camera.followSmoothness > 0.0f)
         {
-            float t = 1.0f - std::pow(1.0f - camera.followSmoothness, deltaTime * 60.0f);
+            // Clamp smoothness to [0,1] to prevent undefined behavior in std::pow when base < 0
+            float smoothness = std::clamp(camera.followSmoothness, 0.0f, 1.0f);
+            float t = 1.0f - std::pow(1.0f - smoothness, deltaTime * 60.0f);
             camera.camera.position = Math::Vector2::Lerp(camera.camera.position, targetPos, t);
         }
         else
@@ -135,11 +144,8 @@ namespace Nyon::ECS
         rendererCamera.nearPlane = camera->camera.nearPlane;
         rendererCamera.farPlane = camera->camera.farPlane;
         
-        // Update screen dimensions in camera component
+        // Update camera screen dimensions in camera component
         auto& mutableCamera = m_ComponentStore->GetComponent<CameraComponent>(m_ActiveCameraEntity);
         mutableCamera.UpdateScreenDimensions(screenWidth, screenHeight);
-        
-        // Begin scene with updated camera
-        Graphics::Renderer2D::BeginScene(rendererCamera);
     }
 }
