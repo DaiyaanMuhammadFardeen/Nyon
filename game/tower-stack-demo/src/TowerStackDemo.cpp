@@ -147,7 +147,7 @@ void TowerStackDemo::SpawnActiveBlock()
 
     m_ActiveBlock = entities.CreateEntity();
 
-    float spawnY = m_HighestBlockY + BLOCK_HEIGHT * 3.0f + 30.0f;
+    float spawnY = m_HighestBlockY + BLOCK_HEIGHT + 1.0f;
 
     // Transform
     ECS::TransformComponent t;
@@ -183,6 +183,8 @@ void TowerStackDemo::DropActiveBlock()
     // Add physics body
     ECS::PhysicsBodyComponent body;
     body.SetMass(1.0f);
+    float inertia = body.mass * (BLOCK_WIDTH * BLOCK_WIDTH + BLOCK_HEIGHT * BLOCK_HEIGHT) / 12.0f;
+    body.SetInertia(inertia);
     body.UpdateMassProperties();
     body.isAwake = true;
     body.allowSleep = true;
