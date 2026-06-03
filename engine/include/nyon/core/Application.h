@@ -23,10 +23,8 @@ namespace Nyon
         // Methods that can be overridden by games
         virtual void OnStart() {}
         virtual void OnUpdate(float deltaTime) {} // For backward compatibility - per-frame user logic
-        virtual void OnFixedUpdate(float deltaTime) {} // Fixed timestep update for physics - no default delegation
-        virtual void OnRender() {} // For backward compatibility
-        virtual void OnInterpolateAndRender(float alpha) { OnRender(); } // Render with interpolation
-        virtual void OnEvent() {}
+        virtual void OnFixedUpdate(float deltaTime) {} // Fixed timestep update for physics
+        virtual void OnInterpolateAndRender(float alpha) {} // Render with interpolation
 
     private:
         void Init();
