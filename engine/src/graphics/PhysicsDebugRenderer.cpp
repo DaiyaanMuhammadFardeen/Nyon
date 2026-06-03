@@ -42,9 +42,35 @@ namespace Nyon::Graphics
                 DrawSegmentShape(collider.GetSegment(), transform, color);
                 break;
                 
-            // case ECS::ColliderComponent::ShapeType::Chain:
-            //     DrawChainShape(collider.GetChain(), transform, color);
-            //     break;
+            case ECS::ColliderComponent::ShapeType::Chain:
+                DrawChainShape(collider.GetChain(), transform, color);
+                break;
+                
+            case ECS::ColliderComponent::ShapeType::Composite:
+                for (const auto& sub : collider.GetComposite().subShapes)
+                {
+                    if (std::holds_alternative<ECS::ColliderComponent::CircleShape>(sub))
+                    {
+                        ECS::ColliderComponent temp(std::get<ECS::ColliderComponent::CircleShape>(sub));
+                        DrawCircleShape(temp.GetCircle(), transform, color);
+                    }
+                    else if (std::holds_alternative<ECS::ColliderComponent::PolygonShape>(sub))
+                    {
+                        ECS::ColliderComponent temp(std::get<ECS::ColliderComponent::PolygonShape>(sub));
+                        DrawPolygonShape(temp.GetPolygon(), transform, color);
+                    }
+                    else if (std::holds_alternative<ECS::ColliderComponent::CapsuleShape>(sub))
+                    {
+                        ECS::ColliderComponent temp(std::get<ECS::ColliderComponent::CapsuleShape>(sub));
+                        DrawCapsuleShape(temp.GetCapsule(), transform, color);
+                    }
+                    else if (std::holds_alternative<ECS::ColliderComponent::SegmentShape>(sub))
+                    {
+                        ECS::ColliderComponent temp(std::get<ECS::ColliderComponent::SegmentShape>(sub));
+                        DrawSegmentShape(temp.GetSegment(), transform, color);
+                    }
+                }
+                break;
                 
             default:
                 break;
