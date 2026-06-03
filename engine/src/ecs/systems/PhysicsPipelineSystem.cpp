@@ -14,6 +14,10 @@ namespace Nyon::ECS
         // Find physics world component and store its entity ID
         m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
                 m_PhysicsWorldEntity = entityId;
+                // Sync pipeline config from world component settings
+                m_Config.baumgarte = world.baumgarteBeta;
+                m_Config.linearSlop = world.linearSlop;
+                m_Config.maxLinearCorrection = world.maxLinearCorrection;
                 });
 
         if (m_PhysicsWorldEntity == INVALID_ENTITY)
@@ -37,6 +41,11 @@ namespace Nyon::ECS
         {
             m_ComponentStore->ForEachComponent<PhysicsWorldComponent>([&](EntityID entityId, PhysicsWorldComponent& world) {
                     m_PhysicsWorldEntity = entityId;
+
+                    // Sync pipeline config from world component settings
+                    m_Config.baumgarte = world.baumgarteBeta;
+                    m_Config.linearSlop = world.linearSlop;
+                    m_Config.maxLinearCorrection = world.maxLinearCorrection;
 
                     // Initialize island manager now that we have a physics world
                     if (!m_IslandManager)
@@ -293,8 +302,7 @@ namespace Nyon::ECS
 
         // Query broad phase for overlapping pairs using DynamicTree
         // This is O(n log n) instead of O(n²) brute force
-        std::cerr << "[BROAD-S] ShapeProxyMap size=" << m_ShapeProxyMap.size() 
-                  << " BroadPhasePairs before=" << m_BroadPhasePairs.size() << std::endl;
+
         for (const auto& [entityId, proxyId] : m_ShapeProxyMap)
         {
             // Only query for dynamic bodies (static bodies don't initiate collision checks)
@@ -329,28 +337,23 @@ namespace Nyon::ECS
         m_ContactManifolds.clear();
         m_ContactMap.clear();
 
-        std::cerr << "[NARROW-S] Processing " << m_BroadPhasePairs.size() << " pairs" << std::endl;
-
         // Clear world contacts for this frame
         if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
             auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
             world.contactManifolds.clear();
         }
 
-
         // Test each broad phase pair for actual collision
         for (const auto& [entityIdA, entityIdB] : m_BroadPhasePairs)
         {
-            ContactManifold manifold = GenerateManifold(entityIdA, entityIdB);
+            ECS::ContactManifold manifold = GenerateManifold(entityIdA, entityIdB);
             if (!manifold.points.empty())
             {
-                // Store contact for constraint solving
+                manifold.touching = true;
                 uint64_t key = (static_cast<uint64_t>(std::min(entityIdA, entityIdB)) << 32) |
                     static_cast<uint64_t>(std::max(entityIdA, entityIdB));
                 m_ContactMap[key] = m_ContactManifolds.size();
 
-                // Copy to world component FIRST for island manager and debug rendering.
-                // Then move into m_ContactManifolds.
                 if (m_PhysicsWorldEntity != INVALID_ENTITY && m_ComponentStore) {
                     auto& world = m_ComponentStore->GetComponent<PhysicsWorldComponent>(m_PhysicsWorldEntity);
                     world.contactManifolds.push_back(manifold);
@@ -1009,31 +1012,31 @@ namespace Nyon::ECS
 
     void PhysicsPipelineSystem::SolvePositionConstraints()
     {
-        int correctionsApplied = 0;
         for (const auto& constraint : m_VelocityConstraints)
         {
             auto& bodyA = m_SolverBodies[constraint.indexA];
             auto& bodyB = m_SolverBodies[constraint.indexB];
 
-            // Precompute world centroids for this position correction iteration
-            float cosA = std::cos(bodyA.angle);
-            float sinA = std::sin(bodyA.angle);
-            Math::Vector2 worldCentroidA = bodyA.position + Math::Vector2{
-                bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
-                bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
-            };
-
-            float cosB = std::cos(bodyB.angle);
-            float sinB = std::sin(bodyB.angle);
-            Math::Vector2 worldCentroidB = bodyB.position + Math::Vector2{
-                bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
-                bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
-            };
-
             for (const auto& point : constraint.points)
             {
                 if (point.separation < -m_Config.linearSlop)
                 {
+                    // Recompute centroids from CURRENT body state (updated by any previous
+                    // point correction in this constraint, ensuring correct moment arms).
+                    float cosA = std::cos(bodyA.angle);
+                    float sinA = std::sin(bodyA.angle);
+                    Math::Vector2 worldCentroidA = bodyA.position + Math::Vector2{
+                        bodyA.localCenter.x * cosA - bodyA.localCenter.y * sinA,
+                        bodyA.localCenter.x * sinA + bodyA.localCenter.y * cosA
+                    };
+
+                    float cosB = std::cos(bodyB.angle);
+                    float sinB = std::sin(bodyB.angle);
+                    Math::Vector2 worldCentroidB = bodyB.position + Math::Vector2{
+                        bodyB.localCenter.x * cosB - bodyB.localCenter.y * sinB,
+                        bodyB.localCenter.x * sinB + bodyB.localCenter.y * cosB
+                    };
+
                     Math::Vector2 rA = point.position - worldCentroidA;
                     Math::Vector2 rB = point.position - worldCentroidB;
 
@@ -1041,7 +1044,7 @@ namespace Nyon::ECS
                     float C = m_Config.baumgarte * (-point.separation - m_Config.linearSlop);
                     C = std::clamp(C, 0.0f, m_Config.maxLinearCorrection);
 
-                    // Calculate full effective mass including rotational inertia
+                    // Effective mass including rotational inertia
                     float rAcrossN = Math::Vector2::Cross(rA, constraint.normal);
                     float rBcrossN = Math::Vector2::Cross(rB, constraint.normal);
 
@@ -1053,38 +1056,27 @@ namespace Nyon::ECS
 
                     Math::Vector2 P = constraint.normal * (C * mass);
 
-
-
-                    // ONLY move dynamic bodies - NEVER move static bodies!
-                    // Move each body based on its inverse mass (lighter bodies move more)
+                    // Apply correction based on body types
                     if (!bodyA.isStatic && !bodyB.isStatic)
                     {
-                        // Both dynamic - move both apart
                         bodyA.position -= P * constraint.invMassA;
-                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);  // Angular correction
+                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);
                         bodyB.position += P * constraint.invMassB;
-                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);  // Angular correction
-                        correctionsApplied++;
+                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);
                     }
                     else if (!bodyA.isStatic)
                     {
-                        // B is static - only move A away from B
                         bodyA.position -= P * constraint.invMassA;
-                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);  // Angular correction
-                        correctionsApplied++;
+                        bodyA.angle    -= constraint.invIA * Math::Vector2::Cross(rA, P);
                     }
                     else if (!bodyB.isStatic)
                     {
-                        // A is static - only move B away from A
                         bodyB.position += P * constraint.invMassB;
-                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);  // Angular correction
-                        correctionsApplied++;
+                        bodyB.angle    += constraint.invIB * Math::Vector2::Cross(rB, P);
                     }
-                    // If both are static, don't move anything (shouldn't happen)
                 }
             }
         }
-
     }
 
     void PhysicsPipelineSystem::IntegrateVelocities(float dt)
@@ -1157,15 +1149,6 @@ namespace Nyon::ECS
 
             // Integrate angle
             body.angle += body.angularVelocity * dt;
-        }
-    }
-
-    void PhysicsPipelineSystem::ClearPersistentContacts()
-    {
-        // Mark all contacts as non-persistent for next frame
-        for (auto& manifold : m_ContactManifolds)
-        {
-            manifold.persisted = false;
         }
     }
 

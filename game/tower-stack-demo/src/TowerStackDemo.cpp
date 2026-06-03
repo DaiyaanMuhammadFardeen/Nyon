@@ -68,7 +68,7 @@ void TowerStackDemo::CreateWorld()
     world.enableSleep            = true;
     world.enableWarmStarting     = true;
     world.enableContinuous       = false;
-    world.baumgarteBeta          = 0.2f;
+    world.baumgarteBeta          = 0.1f;
 
     cs.AddComponent(m_WorldEntity, std::move(world));
 }

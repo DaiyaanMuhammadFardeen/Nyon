@@ -113,6 +113,8 @@ namespace Nyon::Physics
         // Clip incident edge segment against reference face boundaries.
         // Keeps the portion of the incident edge that lies within the reference face's
         // side planes (edge-direction extent) and is penetrating the reference face plane.
+        // featureId encodes: (refFaceIndex << 16) | incFaceIndex | (clipIdx << 24)
+        // so each clip vertex gets a unique, persistent identifier for warm starting.
         inline void ClipSegmentToLine(std::vector<ECS::ContactPoint>& outContacts,
                                       const std::vector<Math::Vector2>& refVerts,
                                       const std::vector<Math::Vector2>& incVerts,
@@ -174,8 +176,9 @@ namespace Nyon::Physics
 
             // --- Final clip against reference face plane ---
             float refOffset = Dot(normal, v1);
-            for (const auto& pt : clippingIn)
+            for (size_t ci = 0; ci < clippingIn.size(); ++ci)
             {
+                const auto& pt = clippingIn[ci];
                 float sep = Dot(normal, pt) - refOffset;
                 if (sep <= 0.0f)                     // penetration or touching
                 {
@@ -188,6 +191,9 @@ namespace Nyon::Physics
                     cp.normalMass   = 0.0f;
                     cp.tangentMass  = 0.0f;
                     cp.persisted    = false;
+                    cp.featureId    = (static_cast<uint32_t>(refFaceIndex) << 16)
+                                    | (static_cast<uint32_t>(incFaceIndex) & 0xFFFF)
+                                    | (static_cast<uint32_t>(ci) << 24);
                     outContacts.push_back(cp);
 
                     COLLISION_DEBUG_LOG("        Contact @ (" << pt.x << "," << pt.y << ") sep=" << sep);

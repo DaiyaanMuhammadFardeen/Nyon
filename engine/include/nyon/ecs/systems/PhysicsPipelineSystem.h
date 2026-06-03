@@ -165,7 +165,6 @@ namespace Nyon::ECS
         // Utility methods
         void PrepareBodiesForUpdate();
         void UpdateTransformsFromSolver();
-        void ClearPersistentContacts();
         
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
