@@ -107,6 +107,7 @@ namespace Nyon::Physics
         void PutIslandsToSleep();
         void WakeSleepingIslands();
         bool ShouldIslandSleep(const Island& island) const;
+        void RestoreIslandSleepState(Island& island);
         
         // Helper methods
         bool AreBodiesConnected(ECS::EntityID bodyA, ECS::EntityID bodyB) const;
@@ -129,6 +130,9 @@ namespace Nyon::Physics
         // Body tracking
         std::unordered_set<ECS::EntityID> m_VisitedBodies;
         std::unordered_map<ECS::EntityID, size_t> m_BodyIslandMap; // bodyId -> island index
+        
+        // Cross-frame sleep state: preserves sleep timers and awake state when islands are rebuilt
+        std::unordered_map<ECS::EntityID, std::pair<float, bool>> m_BodySleepState;
         
         // Constants
         static constexpr float SLEEP_THRESHOLD = 2.0f;        // Velocity threshold for sleeping (pixels/sec)
