@@ -643,8 +643,7 @@ void SimplePhysicsDemo::DespawnOutOfBoundsObjects()
     // Remove entities from component store and tracking list
     for (const auto& entityId : entitiesToDespawn)
     {
-        // Destroy the entity (this removes all its components)
-        GetEntityManager().DestroyEntity(entityId);
+        GetEntityManager().DestroyEntity(entityId, GetComponentStore());
         
         // Remove from tracking list
         m_SpawnedQuads.erase(
