@@ -245,6 +245,12 @@ namespace Nyon::ECS
         SegmentShape& GetSegment() { return std::get<SegmentShape>(shape); }
         const SegmentShape& GetSegment() const { return std::get<SegmentShape>(shape); }
         
+        ChainShape& GetChain() { return std::get<ChainShape>(shape); }
+        const ChainShape& GetChain() const { return std::get<ChainShape>(shape); }
+        
+        CompositeShape& GetComposite() { return std::get<CompositeShape>(shape); }
+        const CompositeShape& GetComposite() const { return std::get<CompositeShape>(shape); }
+        
         // === GEOMETRY CALCULATIONS ===
         void CalculateAABB(const Math::Vector2& position, float rotation, Math::Vector2& outMin, Math::Vector2& outMax) const
         {
@@ -345,8 +351,8 @@ namespace Nyon::ECS
                         std::max(center1.y, center2.y) + capsule.radius
                     };
                     
-                    outMin = min;
-                    outMax = max;
+                    outMin = { min.x - speculativeDistance, min.y - speculativeDistance };
+                    outMax = { max.x + speculativeDistance, max.y + speculativeDistance };
                     break;
                 }
                 
@@ -365,19 +371,122 @@ namespace Nyon::ECS
                     Math::Vector2 p2 = rotate2D(segment.point2) + position;
                     
                     outMin = {
-                        std::min(p1.x, p2.x) - segment.radius,
-                        std::min(p1.y, p2.y) - segment.radius
+                        std::min(p1.x, p2.x) - segment.radius - speculativeDistance,
+                        std::min(p1.y, p2.y) - segment.radius - speculativeDistance
                     };
                     outMax = {
-                        std::max(p1.x, p2.x) + segment.radius,
-                        std::max(p1.y, p2.y) + segment.radius
+                        std::max(p1.x, p2.x) + segment.radius + speculativeDistance,
+                        std::max(p1.y, p2.y) + segment.radius + speculativeDistance
                     };
                     break;
                 }
                 
+                case ShapeType::Chain:
+                {
+                    const auto& chain = GetChain();
+                    if (chain.vertices.empty())
+                    {
+                        outMin = position;
+                        outMax = position;
+                        break;
+                    }
+                    
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto rotate2D = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+                    
+                    Math::Vector2 first = rotate2D(chain.vertices[0]) + position;
+                    outMin = first;
+                    outMax = first;
+                    for (size_t i = 1; i < chain.vertices.size(); ++i)
+                    {
+                        Math::Vector2 v = rotate2D(chain.vertices[i]) + position;
+                        outMin.x = std::min(outMin.x, v.x);
+                        outMin.y = std::min(outMin.y, v.y);
+                        outMax.x = std::max(outMax.x, v.x);
+                        outMax.y = std::max(outMax.y, v.y);
+                    }
+                    float r = std::max(chain.radius + speculativeDistance, speculativeDistance);
+                    outMin.x -= r;
+                    outMin.y -= r;
+                    outMax.x += r;
+                    outMax.y += r;
+                    break;
+                }
+                
+                case ShapeType::Composite:
+                {
+                    // Composite AABB via sub-shape iteration
+                    const auto& composite = GetComposite();
+                    if (composite.subShapes.empty())
+                    {
+                        outMin = position;
+                        outMax = position;
+                        break;
+                    }
+
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto compRotate = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+
+                    bool first = true;
+                    for (const auto& sub : composite.subShapes)
+                    {
+                        Math::Vector2 subMin, subMax;
+                        if (std::holds_alternative<ColliderComponent::CircleShape>(sub))
+                        {
+                            const auto* c = std::get_if<ColliderComponent::CircleShape>(&sub);
+                            subMin = Math::Vector2(position.x - c->radius - speculativeDistance, position.y - c->radius - speculativeDistance);
+                            subMax = Math::Vector2(position.x + c->radius + speculativeDistance, position.y + c->radius + speculativeDistance);
+                        }
+                        else if (std::holds_alternative<ColliderComponent::PolygonShape>(sub))
+                        {
+                            const auto* p = std::get_if<ColliderComponent::PolygonShape>(&sub);
+                            Math::Vector2 pFirst = compRotate(p->vertices[0]) + position;
+                            subMin = subMax = pFirst;
+                            for (const auto& v : p->vertices)
+                            {
+                                Math::Vector2 rv = compRotate(v) + position;
+                                subMin.x = std::min(subMin.x, rv.x);
+                                subMin.y = std::min(subMin.y, rv.y);
+                                subMax.x = std::max(subMax.x, rv.x);
+                                subMax.y = std::max(subMax.y, rv.y);
+                            }
+                            subMin.x -= speculativeDistance;
+                            subMin.y -= speculativeDistance;
+                            subMax.x += speculativeDistance;
+                            subMax.y += speculativeDistance;
+                        }
+                        else
+                        {
+                            subMin = Math::Vector2(position.x - speculativeDistance, position.y - speculativeDistance);
+                            subMax = Math::Vector2(position.x + speculativeDistance, position.y + speculativeDistance);
+                        }
+
+                        if (first)
+                        {
+                            outMin = subMin;
+                            outMax = subMax;
+                            first = false;
+                        }
+                        else
+                        {
+                            outMin.x = std::min(outMin.x, subMin.x);
+                            outMin.y = std::min(outMin.y, subMin.y);
+                            outMax.x = std::max(outMax.x, subMax.x);
+                            outMax.y = std::max(outMax.y, subMax.y);
+                        }
+                    }
+                    break;
+                }
+                
                 default:
-                    outMin = position;
-                    outMax = position;
+                    outMin = position - Math::Vector2{ speculativeDistance, speculativeDistance };
+                    outMax = position + Math::Vector2{ speculativeDistance, speculativeDistance };
                     break;
             }
         }
@@ -440,14 +549,17 @@ namespace Nyon::ECS
                     const auto& polygon = GetPolygon();
                     if (polygon.vertices.size() < 3) return 0.0f;
                     
+                    // Translate vertices to centroid to compute inertia about centroid
+                    // (fixes Bug #18: inertia was about origin instead of centroid)
                     const auto& verts = polygon.vertices;
+                    const auto& centroid = polygon.centroid;
                     size_t n = verts.size();
                     float numerator = 0.0f;
                     float twoArea = 0.0f;
                     
                     for (size_t i = 0; i < n; ++i) {
-                        const Math::Vector2& p0 = verts[i];
-                        const Math::Vector2& p1 = verts[(i + 1) % n];
+                        Math::Vector2 p0 = verts[i] - centroid;
+                        Math::Vector2 p1 = verts[(i + 1) % n] - centroid;
                         
                         float cross = p0.x * p1.y - p1.x * p0.y;
                         twoArea += cross;
