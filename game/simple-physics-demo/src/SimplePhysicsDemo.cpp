@@ -10,7 +10,6 @@
 
 #include <iostream>
 #include <iomanip>
-#include <cmath>
 #include <vector>
 #include <random>
 #include <algorithm>
@@ -37,6 +36,10 @@ void SimplePhysicsDemo::OnECSStart()
     CreatePlatform();
     CreateSlopedPlatform();
     CreatePlayerQuad();
+    
+    // Initialize auto-spawn timer to a random positive value to avoid immediate spawn
+    std::uniform_real_distribution<float> initDelay(m_SpawnIntervalMin, m_SpawnIntervalMax);
+    m_NextAutoSpawnTime = initDelay(m_Rng);
 }
 
 // ============================================================================
@@ -69,25 +72,24 @@ void SimplePhysicsDemo::OnECSFixedUpdate(float deltaTime)
     // Handle player input
     HandlePlayerInput(deltaTime);
 
-    // 1. Define your spawn interval (0.1 seconds = 100ms)
-    const float spawnInterval = 1.0f;
-
+    // Auto-spawn circles at random intervals
     while (m_SimTime >= m_NextAutoSpawnTime)
     {
         int width, height;
         glfwGetWindowSize(GetWindow(), &width, &height);
 
-        // 2. Define the random X distribution range
+        // Random X position within screen bounds
         std::uniform_real_distribution<float> xDist(100.0f, float(width - 100));
 
-        float spawnX = xDist(m_Rng); // Random X position
+        float spawnX = xDist(m_Rng);
         float spawnY = float(height) * 0.8f;
 
         std::cerr << "[DEMO] Auto-spawning circle at (" << spawnX << ", " << spawnY << ")\n";
         CreateSpawnedCircle(spawnX, spawnY);
 
-        // 3. Increment by exactly 100ms
-        m_NextAutoSpawnTime += spawnInterval;
+        // Schedule next spawn at random interval
+        std::uniform_real_distribution<float> intervalDist(m_SpawnIntervalMin, m_SpawnIntervalMax);
+        m_NextAutoSpawnTime += intervalDist(m_Rng);
     }
 
     // Check for mouse click to spawn circles
@@ -319,9 +321,8 @@ void SimplePhysicsDemo::CreatePlayerQuad()
 
     // Calculate inertia from collider shape
     {
-        float area    = playerCollider.CalculateArea();           // π * r²
-        float density = (area > 0.0f) ? body.mass / area : 0.0f;
-        body.SetMass(5.0f);
+        float area = playerCollider.CalculateArea();
+        body.SetMass(2.0f);
         body.SetInertia(playerCollider.CalculateInertiaPerUnitMass() * body.mass);
     }
 
@@ -334,7 +335,7 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     body.allowSleep = false;  // Player should never sleep
 
     // Lock rotation for player to prevent unwanted spinning
-    body.motionLocks.lockRotation = false;
+    body.motionLocks.lockRotation = true;
 
     // ── render component ─────────────────────────────────────────────────────
     // Render as a circle: width/height = diameter, origin = radius
@@ -404,7 +405,7 @@ void SimplePhysicsDemo::CreateSpawnedQuad(float x, float y)
     body.allowSleep = true;
 
     // Lock rotation to prevent spinning
-    body.motionLocks.lockRotation = false;
+    body.motionLocks.lockRotation = true;
 
     // ── render component ─────────────────────────────────────────────────────
     ECS::RenderComponent spawnRender({ 50.0f, 50.0f }, { 0.5f, 1.0f, 0.5f });  // Green color
@@ -477,8 +478,8 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
     std::uniform_real_distribution<float> radiusDist(10.0f, 20.0f);
     float radius = radiusDist(m_Rng);
 
-    // Ensure the circle spawns on top of the platform (above y = 95)
-    constexpr float platformTop = 70.0f + 25.0f; // platform y + half height
+    // Ensure the circle spawns on top of the platform (above y = 125)
+    constexpr float platformTop = 100.0f + 25.0f; // platform y + half height
     float spawnY = std::max(y, platformTop + radius + 1.0f);
 
     // Transform
@@ -517,7 +518,7 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
     body.allowSleep = true;
 
     // Lock rotation to prevent spinning
-    body.motionLocks.lockRotation = false;
+    body.motionLocks.lockRotation = true;
 
     // Generate random color for this circle
     std::uniform_real_distribution<float> colorDist(0.0f, 1.0f);
