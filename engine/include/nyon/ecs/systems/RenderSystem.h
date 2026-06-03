@@ -146,7 +146,8 @@ namespace Nyon::ECS
         
         void Shutdown() override
         {
-            Graphics::Renderer2D::Shutdown();
+            // Renderer2D lifecycle is managed by Application (initialized in Init, shutdown in destructor).
+            // Do NOT call Renderer2D::Shutdown() here to avoid double-free issues.
         }
         
     private:
