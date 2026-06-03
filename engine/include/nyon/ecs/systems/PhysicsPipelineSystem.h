@@ -119,8 +119,8 @@ namespace Nyon::ECS
         void NarrowPhaseDetection();
         void IslandDetection();
         void ConstraintInitialization();
-        void VelocitySolving();
-        void PositionSolving();
+        void VelocitySolving(float dt);
+        void PositionSolving(float dt);
         void Integration();
         void StoreImpulses();
         void UpdateSleeping();
