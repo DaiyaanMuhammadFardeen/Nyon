@@ -15,12 +15,10 @@ namespace Nyon::ECS
     {
         // === TRANSLATIONAL PHYSICS ===
         Math::Vector2 velocity = {0.0f, 0.0f};      // Linear velocity in pixels/second
-        Math::Vector2 acceleration = {0.0f, 0.0f};  // Linear acceleration in pixels/second^2
         Math::Vector2 force = {0.0f, 0.0f};         // Accumulated forces for this frame
         
         // === ROTATIONAL PHYSICS ===
         float angularVelocity = 0.0f;               // Angular velocity in radians/second
-        float angularAcceleration = 0.0f;           // Angular acceleration in radians/second^2
         float torque = 0.0f;                        // Accumulated torques for this frame
         
         // === MASS PROPERTIES ===
@@ -29,6 +27,8 @@ namespace Nyon::ECS
         float inertia = 1.0f;                       // Moment of inertia (default to 1 for stability)
         float inverseInertia = 1.0f;                // 1/inertia (cached for performance)
         Math::Vector2 centerOfMass = {0.0f, 0.0f};  // Local center of mass
+        bool massIsExplicit = false;                // true when mass is user-set; skip auto-calculation
+        bool inertiaIsExplicit = false;             // true when inertia is user-set; skip auto-calculation
         
         // === MATERIAL PROPERTIES ===
         float friction = 0.1f;                      // Friction coefficient (0-1)
@@ -76,6 +76,7 @@ namespace Nyon::ECS
         void SetMass(float newMass)
         {
             mass = newMass;
+            massIsExplicit = true;  // mark as user-controlled
             UpdateMassProperties();
         }
         
@@ -83,6 +84,7 @@ namespace Nyon::ECS
         void SetInertia(float newInertia)
         {
             inertia = newInertia;
+            inertiaIsExplicit = true;  // mark as user-controlled
             inverseInertia = (inertia > 0.0f) ? 1.0f / inertia : 0.0f;
         }
         

@@ -7,6 +7,9 @@
 #include <cassert>
 #include <algorithm>  // For std::find and std::remove
 #include <unordered_map>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
 
 namespace Nyon::ECS
 {
@@ -170,13 +173,21 @@ namespace Nyon::ECS
         {
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt == m_Containers.end()) {
-                std::terminate(); // Component type not registered
+                std::ostringstream oss;
+                oss << "ComponentStore::GetComponent - Component type not registered: "
+                    << typeid(T).name() << " (entity=" << entity << ")";
+                std::cerr << "[FATAL ERROR] " << oss.str() << std::endl;
+                throw std::runtime_error(oss.str());
             }
             
             auto& container = *static_cast<ComponentContainer<T>*>(containerIt->second.get());
             auto mapIt = container.indexMap.find(entity);
             if (mapIt == container.indexMap.end() || !container.activeFlags[mapIt->second]) {
-                std::terminate(); // Entity does not have this component
+                std::ostringstream oss;
+                oss << "ComponentStore::GetComponent - Entity does not have this component: "
+                    << typeid(T).name() << " (entity=" << entity << ")";
+                std::cerr << "[FATAL ERROR] " << oss.str() << std::endl;
+                throw std::runtime_error(oss.str());
             }
             
             return container.components[mapIt->second];
@@ -193,13 +204,21 @@ namespace Nyon::ECS
         {
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt == m_Containers.end()) {
-                std::terminate(); // Component type not registered
+                std::ostringstream oss;
+                oss << "ComponentStore::GetComponent - Component type not registered: "
+                    << typeid(T).name() << " (entity=" << entity << ")";
+                std::cerr << "[FATAL ERROR] " << oss.str() << std::endl;
+                throw std::runtime_error(oss.str());
             }
             
             const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
             auto mapIt = container.indexMap.find(entity);
             if (mapIt == container.indexMap.end() || !container.activeFlags[mapIt->second]) {
-                std::terminate(); // Entity does not have this component
+                std::ostringstream oss;
+                oss << "ComponentStore::GetComponent - Entity does not have this component: "
+                    << typeid(T).name() << " (entity=" << entity << ")";
+                std::cerr << "[FATAL ERROR] " << oss.str() << std::endl;
+                throw std::runtime_error(oss.str());
             }
             
             return container.components[mapIt->second];
@@ -250,12 +269,12 @@ namespace Nyon::ECS
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 auto& container = *static_cast<ComponentContainer<T>*>(containerIt->second.get());
-                // Iterate using indexMap for O(1) access
-                for (const auto& [entityId, index] : container.indexMap)
+                // Iterate using entityIds and components vectors in parallel for deterministic order
+                for (size_t i = 0; i < container.entityIds.size(); ++i)
                 {
-                    if (container.activeFlags[index])
+                    if (container.activeFlags[i])
                     {
-                        func(entityId, container.components[index]);
+                        func(container.entityIds[i], container.components[i]);
                     }
                 }
             }
@@ -273,12 +292,12 @@ namespace Nyon::ECS
             auto containerIt = m_Containers.find(typeid(T));
             if (containerIt != m_Containers.end()) {
                 const auto& container = *static_cast<const ComponentContainer<T>*>(containerIt->second.get());
-                // Iterate using indexMap for O(1) access
-                for (const auto& [entityId, index] : container.indexMap)
+                // Iterate using entityIds and components vectors in parallel for deterministic order
+                for (size_t i = 0; i < container.entityIds.size(); ++i)
                 {
-                    if (container.activeFlags[index])
+                    if (container.activeFlags[i])
                     {
-                        func(entityId, container.components[index]);
+                        func(container.entityIds[i], container.components[i]);
                     }
                 }
             }

@@ -1,5 +1,6 @@
 #include "nyon/core/Application.h"
 #include "nyon/graphics/Renderer2D.h"
+#include "nyon/utils/InputManager.h"
 #include <iostream>
 
 // Debug logging macro - only output in debug builds
@@ -112,28 +113,34 @@ namespace Nyon
             m_Accumulator += frameTime;
 
             // --- INPUT PROCESSING ---
-            // Handle input once per frame, not per physics substep
+            // Save previous input state first, then poll GLFW events to get current state.
+            // This ensures IsKeyPressed/IsMousePressed detect transitions correctly.
+            Utils::InputManager::Update();
+            glfwPollEvents();
             ProcessInput();
 
             // --- PHYSICS UPDATE LOOP ---
             // Consumes time from the accumulator in fixed chunks
-            while (m_Accumulator >= FIXED_TIMESTEP)
+            while (m_Accumulator >= Nyon::FIXED_TIMESTEP_D)
             {
-                OnFixedUpdate(static_cast<float>(FIXED_TIMESTEP));
+                OnFixedUpdate(static_cast<float>(Nyon::FIXED_TIMESTEP_D));
                 
                 // Advance simulation time
-                m_Accumulator -= FIXED_TIMESTEP;
+                m_Accumulator -= Nyon::FIXED_TIMESTEP_D;
             }
+
+            // --- PER-FRAME UPDATE ---
+            // Called once per frame after all physics ticks have been processed
+            OnUpdate(static_cast<float>(frameTime));
 
             // --- RENDER ---
             // Calculate 'alpha': how far are we into the *next* physics frame?
             // 0.0 = exactly at prev state, 1.0 = exactly at current state
-            double alpha = m_Accumulator / FIXED_TIMESTEP;
+            double alpha = m_Accumulator / Nyon::FIXED_TIMESTEP_D;
 
             OnInterpolateAndRender(static_cast<float>(alpha));
 
             glfwSwapBuffers(m_Window);
-            glfwPollEvents();
         }
 #ifdef _DEBUG
         std::cerr << "[DEBUG] Application::Run() ended" << std::endl;

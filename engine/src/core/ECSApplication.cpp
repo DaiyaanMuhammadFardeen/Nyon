@@ -1,9 +1,12 @@
 #include "nyon/core/ECSApplication.h"
 #include "nyon/ecs/systems/InputSystem.h"
 #include "nyon/ecs/systems/RenderSystem.h"
-#include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/ecs/systems/PhysicsPipelineSystem.h"
+#include "nyon/ecs/systems/DebugRenderSystem.h"
+#include "nyon/ecs/systems/ParticleRenderSystem.h"
+#include "nyon/ecs/systems/CameraSystem.h"
 #include "nyon/utils/InputManager.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 
 // Debug logging macro - only output in debug builds
@@ -43,23 +46,25 @@ namespace Nyon
         
         // NOW initialize ECS systems in proper order (after game has created required components)
         m_SystemManager.AddSystem(std::make_unique<ECS::InputSystem>());
+        m_SystemManager.AddSystem(std::make_unique<ECS::CameraSystem>());  // Unified camera management
         m_SystemManager.AddSystem(std::make_unique<ECS::PhysicsPipelineSystem>());
         // RenderSystem is NOT added to SystemManager - it's called separately during interpolation
-        if (m_EnableDebugRenderer)
-        {
-            m_SystemManager.AddSystem(std::make_unique<ECS::DebugRenderSystem>());
-        }
+        // Debug renderer has been completely disabled per user request
+
         
         // Initialize RenderSystem separately - only called during OnInterpolateAndRender
         m_RenderSystem = std::make_unique<ECS::RenderSystem>();
         m_RenderSystem->Initialize(m_EntityManager, m_ComponentStore);
         
+        // Initialize DebugRenderSystem for physics debug overlay
+        m_DebugRenderSystem = std::make_unique<ECS::DebugRenderSystem>();
+        m_DebugRenderSystem->Initialize(m_EntityManager, m_ComponentStore);
+        m_DebugRenderSystem->SetFlags(true, false, false, false);  // Only draw shapes by default
+        
         m_ECSInitialized = true;
         
-        // Cache DebugRenderSystem pointer to avoid dynamic_cast every frame
-        m_DebugRenderSystem = m_EnableDebugRenderer ? m_SystemManager.GetSystem<ECS::DebugRenderSystem>() : nullptr;
-        
         NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnStart() completed");
+
     }
     
     void ECSApplication::OnFixedUpdate(float deltaTime)
@@ -68,7 +73,18 @@ namespace Nyon
         
         if (m_ECSInitialized)
         {
+            // Check for F1 key to toggle debug overlay
+            static bool f1PrevState = false;
+            bool f1CurrState = Nyon::Utils::InputManager::IsKeyDown(GLFW_KEY_F1);
+            if (f1CurrState && !f1PrevState) {
+                m_DebugOverlayEnabled = !m_DebugOverlayEnabled;
+                std::cerr << "[DEBUG] Debug overlay " << (m_DebugOverlayEnabled ? "enabled" : "disabled") << "\n";
+            }
+            f1PrevState = f1CurrState;
+            
             // Update only non-render ECS systems (physics, input, etc.)
+            // DebugRenderSystem::Update() is called during OnInterpolateAndRender so that it draws
+            // after RenderSystem::BeginScene, ensuring its shapes are not wiped by camera setup.
             NYON_DEBUG_LOG("[DEBUG] Calling SystemManager.Update() - should update PhysicsPipelineSystem");
             m_SystemManager.Update(deltaTime);
             
@@ -88,33 +104,31 @@ namespace Nyon
         {
             // Pass interpolation alpha to RenderSystem for smooth rendering
             m_RenderSystem->SetInterpolationAlpha(alpha);
-            // Update render system with interpolation
+            // Update render system with interpolation (BeginScene + draw entities + EndScene)
             m_RenderSystem->Update(0.0f); // Delta time not used in rendering
+            
+            // Render debug overlay if enabled in a separate render pass
+            if (m_DebugOverlayEnabled && m_DebugRenderSystem) {
+                m_DebugRenderSystem->SetInterpolationAlpha(alpha);
+                
+                // Start a new render pass for debug shapes.
+                // Use the currently active camera from the main render pass.
+                Graphics::Renderer2D::BeginScene(Graphics::Renderer2D::GetActiveCamera());
+                m_DebugRenderSystem->Update(0.0f);
+                Graphics::Renderer2D::EndScene();
+            }
+
+            // Render particles if particle render system exists
+            auto* particleSystem = m_SystemManager.GetSystem<ECS::ParticleRenderSystem>();
+            if (particleSystem) {
+                // ParticleRenderer now uses Renderer2D's active camera directly
+                // No need to set VP matrix manually
+                particleSystem->Render(alpha);
+            }
         }
         
         // Rendering is handled by the RenderSystem
         // This method exists for compatibility but delegates to ECS systems
         NYON_DEBUG_LOG("[DEBUG] ECSApplication::OnInterpolateAndRender() called with alpha: " << alpha);
-        
-        // Render debug information if DebugRenderSystem exists (use cached pointer)
-        if (m_DebugRenderSystem)
-        {
-            // Pass interpolation alpha to DebugRenderSystem for smooth rendering
-            m_DebugRenderSystem->SetInterpolationAlpha(alpha);
-            
-            // Wrap debug rendering in its own BeginScene/EndScene to ensure
-            // proper setup of vertex buffers, shader uniforms, and GL state.
-            // This prevents stale matrices from corrupting debug output when
-            // future changes add post-processing, multiple render targets, etc.
-            Graphics::Renderer2D::BeginScene();
-            m_DebugRenderSystem->RenderDebugInfo();
-            Graphics::Renderer2D::EndScene();
-        }
-    }
-    
-    ECS::DebugRenderSystem* ECSApplication::GetDebugRenderSystem()
-    {
-        // Return cached pointer - no dynamic_cast needed
-        return m_DebugRenderSystem;
     }
 }

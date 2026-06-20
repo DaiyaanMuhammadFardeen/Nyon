@@ -10,6 +10,8 @@ namespace Nyon::ECS
     using EntityID = uint32_t;
     static constexpr EntityID INVALID_ENTITY = static_cast<EntityID>(-1);
     
+    class ComponentStore;
+    
     /**
      * @brief Manages entity creation, destruction, and lifecycle.
      * 
@@ -34,6 +36,13 @@ namespace Nyon::ECS
         void DestroyEntity(EntityID entity);
         
         /**
+         * @brief Destroy an entity and remove all its components.
+         * @param entity Entity to destroy
+         * @param componentStore Component store to remove components from
+         */
+        void DestroyEntity(EntityID entity, ComponentStore& componentStore);
+        
+        /**
          * @brief Check if an entity is currently active/alive.
          * @param entity Entity to check
          * @return True if entity exists and is active
@@ -48,14 +57,14 @@ namespace Nyon::ECS
         
         /**
          * @brief Get all currently active entity IDs.
-         * @return Vector of active entity IDs
+         * @return Unordered set of active entity IDs
          */
-        const std::vector<EntityID>& GetActiveEntities() const;
+        const std::unordered_set<EntityID>& GetActiveEntities() const;
         
     private:
         EntityID m_NextID;
         std::vector<bool> m_EntityStates;  // true = active, false = destroyed
-        std::vector<EntityID> m_ActiveEntities;
+        std::unordered_set<EntityID> m_ActiveEntities;
         std::vector<EntityID> m_FreeIDs;   // recycled IDs for reuse
     };
 }

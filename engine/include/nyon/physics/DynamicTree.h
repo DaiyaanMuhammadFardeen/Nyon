@@ -202,7 +202,7 @@ namespace Nyon::Physics
         int GetProxyCount() const { return m_proxyCount; }
         
     private:
-        static constexpr float AABB_EXTENSION = 0.1f;      // AABB extension factor
+        static constexpr float AABB_EXTENSION = 10.0f;      // AABB extension factor (pixels)
         static constexpr float AABB_MULTIPLIER = 2.0f;     // AABB multiplier for movement
         static constexpr int NODE_CAPACITY_INCREMENT = 16; // Node pool growth increment
         

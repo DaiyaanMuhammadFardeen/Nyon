@@ -6,14 +6,13 @@
 #include "nyon/ecs/components/ColliderComponent.h"
 #include "nyon/ecs/components/RenderComponent.h"
 #include "nyon/ecs/components/BehaviorComponent.h"
-#include "nyon/ecs/systems/DebugRenderSystem.h"
 #include "nyon/utils/InputManager.h"
 
 #include <iostream>
 #include <iomanip>
-#include <cmath>
 #include <vector>
 #include <random>
+#include <algorithm>
 
 using namespace Nyon;
 
@@ -23,8 +22,6 @@ using namespace Nyon;
 SimplePhysicsDemo::SimplePhysicsDemo()
     : ECSApplication("Nyon – Simple Physics Demo", 1280, 720)
 {
-    // Disable debug renderer for this demo
-    m_EnableDebugRenderer = false;
 }
 
 // ============================================================================
@@ -37,7 +34,12 @@ void SimplePhysicsDemo::OnECSStart()
 {
     CreateWorld();
     CreatePlatform();
+    CreateSlopedPlatform();
     CreatePlayerQuad();
+    
+    // Initialize auto-spawn timer to a random positive value to avoid immediate spawn
+    std::uniform_real_distribution<float> initDelay(m_SpawnIntervalMin, m_SpawnIntervalMax);
+    m_NextAutoSpawnTime = initDelay(m_Rng);
 }
 
 // ============================================================================
@@ -70,21 +72,24 @@ void SimplePhysicsDemo::OnECSFixedUpdate(float deltaTime)
     // Handle player input
     HandlePlayerInput(deltaTime);
 
-    // Auto-spawn random circles at intervals
+    // Auto-spawn circles at random intervals
     while (m_SimTime >= m_NextAutoSpawnTime)
     {
         int width, height;
         glfwGetWindowSize(GetWindow(), &width, &height);
 
+        // Random X position within screen bounds
         std::uniform_real_distribution<float> xDist(100.0f, float(width - 100));
+
         float spawnX = xDist(m_Rng);
         float spawnY = float(height) * 0.8f;
 
         std::cerr << "[DEMO] Auto-spawning circle at (" << spawnX << ", " << spawnY << ")\n";
         CreateSpawnedCircle(spawnX, spawnY);
 
-        // Schedule next spawn
-        m_NextAutoSpawnTime += std::uniform_real_distribution<float>(m_SpawnIntervalMin, m_SpawnIntervalMax)(m_Rng);
+        // Schedule next spawn at random interval
+        std::uniform_real_distribution<float> intervalDist(m_SpawnIntervalMin, m_SpawnIntervalMax);
+        m_NextAutoSpawnTime += intervalDist(m_Rng);
     }
 
     // Check for mouse click to spawn circles
@@ -94,13 +99,8 @@ void SimplePhysicsDemo::OnECSFixedUpdate(float deltaTime)
         SpawnQuadAtMousePosition();
     }
 
-    // ── auto-close after DEMO_DURATION_S ─────────────────────────────────────
-    if (m_SimTime >= DEMO_DURATION_S)
-    {
-        std::cerr << "[DEMO] Simulation complete after "
-                  << m_SimTime << " s.  Closing.\n";
-        Close();
-    }
+    // Despawn objects that fall below the screen
+    DespawnOutOfBoundsObjects();
 }
 
 // ============================================================================
@@ -132,8 +132,8 @@ void SimplePhysicsDemo::CreateWorld()
     // NOTE: PhysicsPipelineSystem currently reads m_Config.linearSlop (0.005)
     // rather than this field.  Fix that pipeline bug for this to take effect,
     // but set it here so the world component is already correct.
-    world.linearSlop            = 0.5f;
-    world.maxLinearCorrection   = 5.0f;   // pixels per step (was 0.2 — too tight)
+    world.linearSlop            = 0.05f;
+    world.maxLinearCorrection   = 2.0f;   // pixels per step (was 0.2 — too tight)
 
     world.enableSleep           = true;
     world.enableWarmStarting    = true;   // no-op until StoreImpulses() is implemented
@@ -186,7 +186,7 @@ void SimplePhysicsDemo::CreatePlatform()
 
     ECS::ColliderComponent platformCollider(platformShape);
     platformCollider.material.friction    = 0.6f;
-    platformCollider.material.restitution = 0.1f;
+    platformCollider.material.restitution = 0.8f;
     platformCollider.material.density     = 0.0f;  // irrelevant for static body
 
     // ── render component ─────────────────────────────────────────────────────
@@ -211,6 +211,83 @@ void SimplePhysicsDemo::CreatePlatform()
 }
 
 // ============================================================================
+//  CreateSlopedPlatform  –  static platform with a slope
+// ============================================================================
+void SimplePhysicsDemo::CreateSlopedPlatform()
+{
+    auto& entities = GetEntityManager();
+    auto& cs       = GetComponentStore();
+
+    // Slope 1: positioned below and to the left of main platform, rotated -25 degrees
+    ECS::EntityID slope1Entity = entities.CreateEntity();
+
+    ECS::TransformComponent t1;
+    t1.position         = { 150.0f, 80.0f };  // Below main platform (y=100), left side
+    t1.previousPosition = t1.position;
+    // Rotate by -25 degrees (about -0.436 radians)
+    t1.rotation         = -0.436332f;
+    t1.previousRotation = t1.rotation;
+
+    ECS::PhysicsBodyComponent body1;
+    body1.isStatic = true;
+    body1.UpdateMassProperties();
+
+    ECS::ColliderComponent::PolygonShape shape1({
+        { -250.0f, -25.0f },
+        {  250.0f, -25.0f },
+        {  250.0f,  25.0f },
+        { -250.0f,  25.0f }
+    });
+
+    ECS::ColliderComponent collider1(shape1);
+    collider1.material.friction    = 0.5f;
+    collider1.material.restitution = 0.8f;
+    collider1.material.density     = 0.0f;
+
+    ECS::RenderComponent render1({ 500.0f, 50.0f }, { 0.4f, 0.4f, 0.8f });
+    render1.origin = { 250.0f, 25.0f };
+
+    cs.AddComponent(slope1Entity, std::move(t1));
+    cs.AddComponent(slope1Entity, std::move(body1));
+    cs.AddComponent(slope1Entity, std::move(collider1));
+    cs.AddComponent(slope1Entity, std::move(render1));
+    
+    // Slope 2: mirrored, positioned below and to the right of main platform, rotated +25 degrees
+    ECS::EntityID slope2Entity = entities.CreateEntity();
+
+    ECS::TransformComponent t2;
+    t2.position         = { 1130.0f, 80.0f };  // Below main platform (y=100), right side
+    t2.previousPosition = t2.position;
+    // Rotate by +25 degrees (about 0.436 radians)
+    t2.rotation         = 0.436332f;
+    t2.previousRotation = t2.rotation;
+
+    ECS::PhysicsBodyComponent body2;
+    body2.isStatic = true;
+    body2.UpdateMassProperties();
+
+    ECS::ColliderComponent::PolygonShape shape2({
+        { -250.0f, -25.0f },
+        {  250.0f, -25.0f },
+        {  250.0f,  25.0f },
+        { -250.0f,  25.0f }
+    });
+
+    ECS::ColliderComponent collider2(shape2);
+    collider2.material.friction    = 0.7f;  // Higher friction for contrast
+    collider2.material.restitution = 0.8f;
+    collider2.material.density     = 0.0f;
+
+    ECS::RenderComponent render2({ 500.0f, 50.0f }, { 0.8f, 0.4f, 0.4f });
+    render2.origin = { 250.0f, 25.0f };
+
+    cs.AddComponent(slope2Entity, std::move(t2));
+    cs.AddComponent(slope2Entity, std::move(body2));
+    cs.AddComponent(slope2Entity, std::move(collider2));
+    cs.AddComponent(slope2Entity, std::move(render2));
+}
+
+// ============================================================================
 //  CreatePlayerQuad  –  controllable player quad with WASD movement and jump
 // ============================================================================
 void SimplePhysicsDemo::CreatePlayerQuad()
@@ -229,40 +306,42 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     t.previousRotation = 0.0f;
 
     // ── collider (set up FIRST so we can derive inertia from it) ─────────────
-    // 50×50 square, centered on the origin.
-    ECS::ColliderComponent::PolygonShape playerShape({
-        { -25.0f, -25.0f },
-        {  25.0f, -25.0f },
-        {  25.0f,  25.0f },
-        { -25.0f,  25.0f }
-    });
+    // Circle with radius 25px (equivalent to the previous 50x50 square's half-extent)
+    ECS::ColliderComponent::CircleShape playerShape;
+    playerShape.center = { 0.0f, 0.0f };
+    playerShape.radius = 25.0f;
 
     ECS::ColliderComponent playerCollider(playerShape);
     playerCollider.material.friction    = 0.4f;
-    playerCollider.material.restitution = 0.1f;  // Low restitution for better control
-    playerCollider.material.density     = 0.0008f;
+    playerCollider.material.restitution = 0.8f;  // Low restitution for better control
+    playerCollider.material.density     = 0.08f;
 
     // ── physics body ─────────────────────────────────────────────────────────
     ECS::PhysicsBodyComponent body;
-    body.mass = 2.0f;
 
     // Calculate inertia from collider shape
     {
-        float area    = playerCollider.CalculateArea();           // 2500.0 px²
-        float density = (area > 0.0f) ? body.mass / area : 0.0f;
-        body.inertia  = playerCollider.CalculateInertiaForUnitDensity() * density;
+        float area = playerCollider.CalculateArea();
+        body.SetMass(2.0f);
+        body.SetInertia(playerCollider.CalculateInertiaPerUnitMass() * body.mass);
     }
+
+    // Set damping for better control
+    body.angularDamping = 0.1f;   // higher damping for player to prevent spinning
+    body.drag           = 0.01f;  // small linear air resistance
 
     body.UpdateMassProperties();
     body.isAwake    = true;
     body.allowSleep = false;  // Player should never sleep
 
-    // Lock rotation for player to prevent uncontrollable spinning
+    // Lock rotation for player to prevent unwanted spinning
     body.motionLocks.lockRotation = true;
 
     // ── render component ─────────────────────────────────────────────────────
+    // Render as a circle: width/height = diameter, origin = radius
     ECS::RenderComponent playerRender({ 50.0f, 50.0f }, { 1.0f, 0.5f, 0.0f });  // Orange color
-    playerRender.origin = { 25.0f, 25.0f };
+    playerRender.origin      = { 25.0f, 25.0f };
+    playerRender.shapeType   = ECS::RenderComponent::ShapeType::Circle;
 
     // ── behavior component for input handling ────────────────────────────────
     ECS::BehaviorComponent behavior;
@@ -273,7 +352,7 @@ void SimplePhysicsDemo::CreatePlayerQuad()
     cs.AddComponent(m_PlayerEntity, std::move(playerRender));
     cs.AddComponent(m_PlayerEntity, std::move(behavior));
 
-    std::cerr << "[DEMO] Player quad created at (640, 360). "
+    std::cerr << "[DEMO] Player circle created at (640, 360). "
               << "Use WASD to move and jump.\n";
 }
 
@@ -305,22 +384,28 @@ void SimplePhysicsDemo::CreateSpawnedQuad(float x, float y)
 
     ECS::ColliderComponent spawnCollider(spawnShape);
     spawnCollider.material.friction    = 0.4f;
-    spawnCollider.material.restitution = 0.2f;
+    spawnCollider.material.restitution = 0.8f;
     spawnCollider.material.density     = 0.0008f;
 
     // ── physics body ─────────────────────────────────────────────────────────
     ECS::PhysicsBodyComponent body;
-    body.mass = 2.0f;
 
     {
         float area    = spawnCollider.CalculateArea();
-        float density = (area > 0.0f) ? body.mass / area : 0.0f;
-        body.inertia  = spawnCollider.CalculateInertiaForUnitDensity() * density;
+        body.SetMass(2.0f);
+        body.SetInertia(spawnCollider.CalculateInertiaPerUnitMass() * body.mass);
     }
+
+    // Set damping to prevent erratic spinning
+    body.angularDamping = 0.05f;  // gentle continuous spin decay
+    body.drag           = 0.01f;  // small linear air resistance
 
     body.UpdateMassProperties();
     body.isAwake    = true;
     body.allowSleep = true;
+
+    // Lock rotation to prevent spinning
+    body.motionLocks.lockRotation = true;
 
     // ── render component ─────────────────────────────────────────────────────
     ECS::RenderComponent spawnRender({ 50.0f, 50.0f }, { 0.5f, 1.0f, 0.5f });  // Green color
@@ -369,9 +454,9 @@ void SimplePhysicsDemo::HandlePlayerInput(float deltaTime)
     // Jump (W) - only when grounded (using contact manifold ground detection)
     if (Nyon::Utils::InputManager::IsKeyPressed(GLFW_KEY_W) && IsPlayerGrounded())
     {
-        body.velocity.y = PLAYER_JUMP_FORCE;
+        // Apply impulse by changing velocity directly, taking into account the mass
+        body.velocity.y += PLAYER_JUMP_FORCE / body.mass;
         body.SetAwake(true);
-        std::cerr << "[DEMO] Jump triggered (vel=" << body.velocity.y << ")\n";
     }
 
     // NOTE: PhysicsPipelineSystem already applies world gravity.
@@ -390,11 +475,11 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
     m_SpawnedQuads.push_back(spawnedEntity);
 
     // Random radius between 10 and 30 pixels
-    std::uniform_real_distribution<float> radiusDist(10.0f, 30.0f);
+    std::uniform_real_distribution<float> radiusDist(10.0f, 20.0f);
     float radius = radiusDist(m_Rng);
 
-    // Ensure the circle spawns on top of the platform (above y = 95)
-    constexpr float platformTop = 70.0f + 25.0f; // platform y + half height
+    // Ensure the circle spawns on top of the platform (above y = 125)
+    constexpr float platformTop = 100.0f + 25.0f; // platform y + half height
     float spawnY = std::max(y, platformTop + radius + 1.0f);
 
     // Transform
@@ -411,19 +496,40 @@ void SimplePhysicsDemo::CreateSpawnedCircle(float x, float y)
 
     ECS::ColliderComponent circleCollider(circleShape);
     circleCollider.material.friction    = 0.4f;
-    circleCollider.material.restitution = 0.2f;
+    circleCollider.material.restitution = 0.8f;
     circleCollider.material.density     = 0.0008f;
 
     // Physics body
     ECS::PhysicsBodyComponent body;
-    body.mass = 2.0f;
+    
+    // Calculate inertia from collider shape
+    {
+        float area = circleCollider.CalculateArea();
+        body.SetMass(1.0f);
+        body.SetInertia(circleCollider.CalculateInertiaPerUnitMass() * body.mass);
+    }
+    
+    // Set damping to prevent erratic spinning
+    body.angularDamping = 0.05f;  // gentle continuous spin decay
+    body.drag           = 0.01f;  // small linear air resistance
+    
     body.UpdateMassProperties();
     body.isAwake = true;
     body.allowSleep = true;
 
+    // Lock rotation to prevent spinning
+    body.motionLocks.lockRotation = true;
+
+    // Generate random color for this circle
+    std::uniform_real_distribution<float> colorDist(0.0f, 1.0f);
+    float r = colorDist(m_Rng);
+    float g = colorDist(m_Rng);
+    float b = colorDist(m_Rng);
+
     // Render
-    ECS::RenderComponent render({ radius * 2.0f, radius * 2.0f }, { 0.5f, 1.0f, 0.5f });
+    ECS::RenderComponent render({ radius * 2.0f, radius * 2.0f }, { r, g, b });
     render.origin = { radius, radius };
+    render.shapeType = ECS::RenderComponent::ShapeType::Circle;
 
     cs.AddComponent(spawnedEntity, std::move(t));
     cs.AddComponent(spawnedEntity, std::move(body));
@@ -455,36 +561,35 @@ bool SimplePhysicsDemo::IsPlayerGrounded()
     {
         if (manifold.points.empty())
             continue;
-
+    
         bool isPlayerA = (manifold.entityIdA == m_PlayerEntity);
         bool isPlayerB = (manifold.entityIdB == m_PlayerEntity);
         if (!isPlayerA && !isPlayerB)
             continue;
-
-        Math::Vector2 contactNormal = isPlayerA ? manifold.normal : -manifold.normal;
-
-        // Consider it “ground” if the contact normal has a large upward component
+    
+        // manifold.normal points FROM A TOWARD B (i.e., from player into platform when player is A).
+        // To get the "surface normal pointing up toward player" direction:
+        //   - If player is A: negate (flip A→B downward to B→A upward)
+        //   - If player is B: use as-is (A→B points upward from platform toward player)
+        Math::Vector2 contactNormal = isPlayerA ? -manifold.normal : manifold.normal;
+    
+        // Consider it "ground" if the contact normal has a large upward component
         float dotUp = Math::Vector2::Dot(contactNormal, up);
-        std::cerr << "[DEMO] IsPlayerGrounded: Manifold normal=(" << contactNormal.x << ", " << contactNormal.y << ") dotUp=" << dotUp << "\n";
         if (dotUp > 0.7f)
         {
             // Also ensure the contact points are not far apart (i.e., actually touching)
             for (const auto& pt : manifold.points)
             {
-                std::cerr << "[DEMO] IsPlayerGrounded: Point separation=" << pt.separation << "\n";
                 if (pt.separation < 1.0f)
                 {
-                    std::cerr << "[DEMO] IsPlayerGrounded: Grounded!\n";
                     return true;
                 }
             }
         }
     }
 
-    std::cerr << "[DEMO] IsPlayerGrounded: Not grounded\n";
     return false;
 }
-
 
 // ============================================================================
 //  SpawnQuadAtMousePosition  –  convert mouse coordinates to world space and spawn
@@ -507,4 +612,48 @@ void SimplePhysicsDemo::SpawnQuadAtMousePosition()
               << worldX << ", " << worldY << ")\n";
     
     CreateSpawnedCircle(worldX, worldY);
+}
+
+// ============================================================================
+//  DespawnOutOfBoundsObjects  –  remove objects that fall below the screen
+// ============================================================================
+void SimplePhysicsDemo::DespawnOutOfBoundsObjects()
+{
+    auto& cs = GetComponentStore();
+    
+    // Collect entities to despawn
+    std::vector<ECS::EntityID> entitiesToDespawn;
+    
+    for (const auto& entityId : m_SpawnedQuads)
+    {
+        if (!cs.HasComponent<ECS::TransformComponent>(entityId))
+            continue;
+            
+        const auto& transform = cs.GetComponent<ECS::TransformComponent>(entityId);
+        
+        // Check if entity has fallen below the despawn threshold
+        if (transform.position.y < DESPAWN_Y_THRESHOLD)
+        {
+            entitiesToDespawn.push_back(entityId);
+            std::cerr << "[DEMO] Despawning entity at y=" << transform.position.y 
+                      << " (below threshold " << DESPAWN_Y_THRESHOLD << ")\n";
+        }
+    }
+    
+    // Remove entities from component store and tracking list
+    for (const auto& entityId : entitiesToDespawn)
+    {
+        GetEntityManager().DestroyEntity(entityId, GetComponentStore());
+        
+        // Remove from tracking list
+        m_SpawnedQuads.erase(
+            std::remove(m_SpawnedQuads.begin(), m_SpawnedQuads.end(), entityId),
+            m_SpawnedQuads.end()
+        );
+    }
+    
+    if (!entitiesToDespawn.empty())
+    {
+        std::cerr << "[DEMO] Despawned " << entitiesToDespawn.size() << " out-of-bounds entities\n";
+    }
 }

@@ -13,6 +13,9 @@ find_package(glm REQUIRED)
 file(GLOB_RECURSE ENGINE_SOURCES "src/*.cpp")
 list(APPEND ENGINE_SOURCES "src/glad.c")
 
+# Ensure ThreadPool is included
+list(APPEND ENGINE_SOURCES "src/utils/ThreadPool.cpp")
+
 # Exclude demo / sample translation units from the engine library
 list(FILTER ENGINE_SOURCES EXCLUDE REGEX ".*/RenderingDemo\\.cpp$")
 

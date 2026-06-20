@@ -25,8 +25,8 @@ namespace Nyon::ECS
         {
             if (!m_EntityManager || !m_ComponentStore) return;
             
-            // Update input manager state
-            Utils::InputManager::Update();
+            // InputManager::Update() is now called at the top of the frame in Application::Run()
+            // to ensure correct input transition detection.
             
             // Process input for all entities with behavior components
             const auto& behaviorEntities = m_ComponentStore->GetEntitiesWithComponent<BehaviorComponent>();

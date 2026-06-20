@@ -37,15 +37,14 @@ namespace Nyon::Physics
                                                  ECS::ContactManifold& manifold);
 
         static ECS::ContactManifold CirclePolygon(uint32_t entityIdA,
-                                                  uint32_t entityIdB,
-                                                  uint32_t shapeIdA,
-                                                  uint32_t shapeIdB,
-                                                  const Nyon::ECS::ColliderComponent::CircleShape& circle,
-                                                  const Nyon::ECS::ColliderComponent::PolygonShape& polygon,
-                                                  const Nyon::ECS::TransformComponent& circleTransform,
-                                                  const Nyon::ECS::TransformComponent& polyTransform,
-                                                  bool flipNormal,
-                                                  ECS::ContactManifold& manifold);
+                                                   uint32_t entityIdB,
+                                                   uint32_t shapeIdA,
+                                                   uint32_t shapeIdB,
+                                                   const Nyon::ECS::ColliderComponent::CircleShape& circle,
+                                                   const Nyon::ECS::ColliderComponent::PolygonShape& polygon,
+                                                   const Nyon::ECS::TransformComponent& circleTransform,
+                                                   const Nyon::ECS::TransformComponent& polyTransform,
+                                                   ECS::ContactManifold& manifold);
 
         static ECS::ContactManifold PolygonPolygon(uint32_t entityIdA,
                                                    uint32_t entityIdB,

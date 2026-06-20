@@ -245,6 +245,12 @@ namespace Nyon::ECS
         SegmentShape& GetSegment() { return std::get<SegmentShape>(shape); }
         const SegmentShape& GetSegment() const { return std::get<SegmentShape>(shape); }
         
+        ChainShape& GetChain() { return std::get<ChainShape>(shape); }
+        const ChainShape& GetChain() const { return std::get<ChainShape>(shape); }
+        
+        CompositeShape& GetComposite() { return std::get<CompositeShape>(shape); }
+        const CompositeShape& GetComposite() const { return std::get<CompositeShape>(shape); }
+        
         // === GEOMETRY CALCULATIONS ===
         void CalculateAABB(const Math::Vector2& position, float rotation, Math::Vector2& outMin, Math::Vector2& outMax) const
         {
@@ -345,8 +351,8 @@ namespace Nyon::ECS
                         std::max(center1.y, center2.y) + capsule.radius
                     };
                     
-                    outMin = min;
-                    outMax = max;
+                    outMin = { min.x - speculativeDistance, min.y - speculativeDistance };
+                    outMax = { max.x + speculativeDistance, max.y + speculativeDistance };
                     break;
                 }
                 
@@ -365,19 +371,122 @@ namespace Nyon::ECS
                     Math::Vector2 p2 = rotate2D(segment.point2) + position;
                     
                     outMin = {
-                        std::min(p1.x, p2.x) - segment.radius,
-                        std::min(p1.y, p2.y) - segment.radius
+                        std::min(p1.x, p2.x) - segment.radius - speculativeDistance,
+                        std::min(p1.y, p2.y) - segment.radius - speculativeDistance
                     };
                     outMax = {
-                        std::max(p1.x, p2.x) + segment.radius,
-                        std::max(p1.y, p2.y) + segment.radius
+                        std::max(p1.x, p2.x) + segment.radius + speculativeDistance,
+                        std::max(p1.y, p2.y) + segment.radius + speculativeDistance
                     };
                     break;
                 }
                 
+                case ShapeType::Chain:
+                {
+                    const auto& chain = GetChain();
+                    if (chain.vertices.empty())
+                    {
+                        outMin = position;
+                        outMax = position;
+                        break;
+                    }
+                    
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto rotate2D = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+                    
+                    Math::Vector2 first = rotate2D(chain.vertices[0]) + position;
+                    outMin = first;
+                    outMax = first;
+                    for (size_t i = 1; i < chain.vertices.size(); ++i)
+                    {
+                        Math::Vector2 v = rotate2D(chain.vertices[i]) + position;
+                        outMin.x = std::min(outMin.x, v.x);
+                        outMin.y = std::min(outMin.y, v.y);
+                        outMax.x = std::max(outMax.x, v.x);
+                        outMax.y = std::max(outMax.y, v.y);
+                    }
+                    float r = std::max(chain.radius + speculativeDistance, speculativeDistance);
+                    outMin.x -= r;
+                    outMin.y -= r;
+                    outMax.x += r;
+                    outMax.y += r;
+                    break;
+                }
+                
+                case ShapeType::Composite:
+                {
+                    // Composite AABB via sub-shape iteration
+                    const auto& composite = GetComposite();
+                    if (composite.subShapes.empty())
+                    {
+                        outMin = position;
+                        outMax = position;
+                        break;
+                    }
+
+                    float cosR = std::cos(rotation);
+                    float sinR = std::sin(rotation);
+                    auto compRotate = [&](Math::Vector2 v) -> Math::Vector2 {
+                        return { v.x * cosR - v.y * sinR, v.x * sinR + v.y * cosR };
+                    };
+
+                    bool first = true;
+                    for (const auto& sub : composite.subShapes)
+                    {
+                        Math::Vector2 subMin, subMax;
+                        if (std::holds_alternative<ColliderComponent::CircleShape>(sub))
+                        {
+                            const auto* c = std::get_if<ColliderComponent::CircleShape>(&sub);
+                            subMin = Math::Vector2(position.x - c->radius - speculativeDistance, position.y - c->radius - speculativeDistance);
+                            subMax = Math::Vector2(position.x + c->radius + speculativeDistance, position.y + c->radius + speculativeDistance);
+                        }
+                        else if (std::holds_alternative<ColliderComponent::PolygonShape>(sub))
+                        {
+                            const auto* p = std::get_if<ColliderComponent::PolygonShape>(&sub);
+                            Math::Vector2 pFirst = compRotate(p->vertices[0]) + position;
+                            subMin = subMax = pFirst;
+                            for (const auto& v : p->vertices)
+                            {
+                                Math::Vector2 rv = compRotate(v) + position;
+                                subMin.x = std::min(subMin.x, rv.x);
+                                subMin.y = std::min(subMin.y, rv.y);
+                                subMax.x = std::max(subMax.x, rv.x);
+                                subMax.y = std::max(subMax.y, rv.y);
+                            }
+                            subMin.x -= speculativeDistance;
+                            subMin.y -= speculativeDistance;
+                            subMax.x += speculativeDistance;
+                            subMax.y += speculativeDistance;
+                        }
+                        else
+                        {
+                            subMin = Math::Vector2(position.x - speculativeDistance, position.y - speculativeDistance);
+                            subMax = Math::Vector2(position.x + speculativeDistance, position.y + speculativeDistance);
+                        }
+
+                        if (first)
+                        {
+                            outMin = subMin;
+                            outMax = subMax;
+                            first = false;
+                        }
+                        else
+                        {
+                            outMin.x = std::min(outMin.x, subMin.x);
+                            outMin.y = std::min(outMin.y, subMin.y);
+                            outMax.x = std::max(outMax.x, subMax.x);
+                            outMax.y = std::max(outMax.y, subMax.y);
+                        }
+                    }
+                    break;
+                }
+                
                 default:
-                    outMin = position;
-                    outMax = position;
+                    outMin = position - Math::Vector2{ speculativeDistance, speculativeDistance };
+                    outMax = position + Math::Vector2{ speculativeDistance, speculativeDistance };
                     break;
             }
         }
@@ -421,69 +530,79 @@ namespace Nyon::ECS
             }
         }
         
-        // Approximate moment of inertia about the local origin for a unit-density body.
-        // The caller should multiply by actual mass if needed.
-        float CalculateInertiaForUnitDensity() const
+        // Moment of inertia about the local origin per unit of mass (I / m).
+        // The caller must multiply this by the actual mass of the body.
+        float CalculateInertiaPerUnitMass() const
         {
             switch (type)
             {
                 case ShapeType::Circle:
                 {
                     const auto& circle = GetCircle();
-                    // I/m = r²/2 for solid disk (per-unit-mass inertia)
-                    // Caller multiplies by mass to get actual inertia: I = m * (r²/2)
+                    // I/m = r²/2 for a solid disk
                     return 0.5f * circle.radius * circle.radius;
                 }
                 
                 case ShapeType::Polygon:
                 {
-                    // Correct polygon inertia using shoelace-based formula
+                    // Calculate area-normalized inertia using the shoelace-based formula
                     const auto& polygon = GetPolygon();
                     if (polygon.vertices.size() < 3) return 0.0f;
                     
+                    // Translate vertices to centroid to compute inertia about centroid
+                    // (fixes Bug #18: inertia was about origin instead of centroid)
                     const auto& verts = polygon.vertices;
+                    const auto& centroid = polygon.centroid;
                     size_t n = verts.size();
                     float numerator = 0.0f;
                     float twoArea = 0.0f;
                     
                     for (size_t i = 0; i < n; ++i) {
-                        const Math::Vector2& p0 = verts[i];
-                        const Math::Vector2& p1 = verts[(i + 1) % n];
-                        float cross = std::abs(Math::Vector2::Cross(p0, p1));
+                        Math::Vector2 p0 = verts[i] - centroid;
+                        Math::Vector2 p1 = verts[(i + 1) % n] - centroid;
                         
-                        // Accumulate terms for moment of inertia
-                        numerator += cross * (
-                            p0.x * p0.x + p0.x * p1.x + p1.x * p1.x +
-                            p0.y * p0.y + p0.y * p1.y + p1.y * p1.y
-                        );
-                        
-                        // Accumulate 2 * area
+                        float cross = p0.x * p1.y - p1.x * p0.y;
                         twoArea += cross;
+                        numerator += cross * (p0.x * p0.x + p0.x * p1.x + p1.x * p1.x +
+                                              p0.y * p0.y + p0.y * p1.y + p1.y * p1.y);
                     }
                     
-                    // I = (density * area * numerator) / (6 * 2*area) = density * numerator / 12
-                    // For unit density: I = numerator / 12
-                    return numerator / 12.0f;
+                    if (std::abs(twoArea) < 1e-6f) return 0.0f;
+                    
+                    // J_z = (numerator / 12) * density
+                    // m = (twoArea / 2) * density
+                    // So I/m = J_z / m = numerator / (6 * twoArea)
+                    return std::abs(numerator / (6.0f * twoArea));
                 }
                 
                 case ShapeType::Capsule:
                 {
+                    // Approximation for a capsule (rectangle + 2 half circles)
                     const auto& capsule = GetCapsule();
                     Math::Vector2 diff = capsule.center2 - capsule.center1;
-                    float h = std::sqrt(diff.x * diff.x + diff.y * diff.y);
+                    float h = sqrt(diff.x * diff.x + diff.y * diff.y);
                     float r = capsule.radius;
-                    // Rough approximation: treat as rectangle (2r x h) plus two circles.
-                    float rectArea = 2.0f * r * h;
-                    float rectInertia = rectArea * (h * h + (2.0f * r) * (2.0f * r)) / 12.0f;
-                    float circleArea = 3.14159f * r * r;
-                    float circleInertia = 0.5f * 3.14159f * r * r * r * r * 2.0f; // two circles
-                    return rectInertia + circleInertia;
-                }
+                    
+                    float areaRect = h * 2.0f * r;
+                    float areaCircles = 3.14159f * r * r;
+                    float totalArea = areaRect + areaCircles;
+                    
+                    // I_rect / m_rect = (h^2 + (2r)^2) / 12
+                    float iRectPerMass = (h * h + 4.0f * r * r) / 12.0f;
+                    float massRectFrac = areaRect / totalArea;
+                    
+                // I_circle / m_circle approximately r^2 / 2 + offset^2
+                float offset = h / 2.0f;
+                float iCirclePerMass = 0.5f * r * r + offset * offset;
+                float massCircleFrac = areaCircles / totalArea;
                 
-                default:
-                    return 0.0f;
+                return iRectPerMass * massRectFrac + iCirclePerMass * massCircleFrac;
             }
+            
+            default:
+                return 0.0f;
         }
+    }
         
         float CalculateMass(float densityOverride = -1.0f) const
         {

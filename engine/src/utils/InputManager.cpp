@@ -99,11 +99,11 @@ namespace Nyon::Utils
         if (key < 0 || key >= GLFW_KEY_LAST) {
             return false;
         }
-        // When no window is available, treat all keys as up (consistent with other methods)
+        // When no window is available, treat all keys as up (not pressed)
         if (s_Window == nullptr) {
-            return false;  // Changed from true to false for consistency
+            return true;
         }
-        return !s_CurrentKeys[key];
+        return !s_CurrentKeys[key] && s_PreviousKeys[key];
     }
 
     bool InputManager::IsMousePressed(int button)
@@ -131,7 +131,7 @@ namespace Nyon::Utils
         if (s_Window == nullptr) {
             return true;
         }
-        return !s_CurrentMouseButtons[button];
+        return !s_CurrentMouseButtons[button] && s_PreviousMouseButtons[button];
     }
 
     void InputManager::GetMousePosition(double& x, double& y)

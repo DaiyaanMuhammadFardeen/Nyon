@@ -100,11 +100,21 @@ namespace Nyon::Physics
 
     void IslandManager::FindIslands()
     {
+        // Save per-body sleep state from existing islands before clearing.
+        // This preserves sleep timers and awake state across frames so islands
+        // can eventually reach the TIME_TO_SLEEP threshold.
+        m_BodySleepState.clear();
+        for (const auto& island : m_AllIslands)
+        {
+            for (auto bodyId : island.bodyIds)
+            {
+                m_BodySleepState[bodyId] = {island.sleepTimer, island.isAwake};
+            }
+        }
+
         m_AllIslands.clear();
-        m_AwakeIslands.clear();
-        m_SleepingIslands.clear();
-        m_BodyIslandMap.clear();
         m_VisitedBodies.clear();
+        m_BodyIslandMap.clear();
         
         // Combine contact and joint graphs
         m_ConnectionGraph.clear();
@@ -141,6 +151,8 @@ namespace Nyon::Physics
                 
                 if (!newIsland.bodyIds.empty())
                 {
+                    // Restore sleep state from previous frame
+                    RestoreIslandSleepState(newIsland);
                     m_AllIslands.push_back(std::move(newIsland));
                 }
             }
@@ -157,6 +169,9 @@ namespace Nyon::Physics
                 isolatedIsland.bodyIds.push_back(entityId);
                 isolatedIsland.canSleep = IsBodyEligibleForSleeping(entityId);
                 
+                // Restore sleep state from previous frame
+                RestoreIslandSleepState(isolatedIsland);
+                
                 // Register isolated body in island map BEFORE adding to array
                 size_t islandIndex = m_AllIslands.size();
                 m_BodyIslandMap[entityId] = islandIndex;
@@ -166,24 +181,7 @@ namespace Nyon::Physics
             }
         });
         
-        // Separate awake and sleeping islands
-        // IMPORTANT: Don't use std::move here - we need to keep m_AllIslands valid because
-        // m_BodyIslandMap contains indices into it. Instead, we maintain parallel lists.
-        for (size_t i = 0; i < m_AllIslands.size(); ++i)
-        {
-            auto& island = m_AllIslands[i];
-            if (island.isAwake)
-            {
-                m_AwakeIslands.push_back(island);  // Copy, not move
-            }
-            else
-            {
-                m_SleepingIslands.push_back(island);  // Copy, not move
-            }
-        }
-        
-        NYON_DEBUG_LOG("Found " << m_AllIslands.size() << " total islands (" 
-                     << m_AwakeIslands.size() << " awake, " << m_SleepingIslands.size() << " sleeping)");
+        NYON_DEBUG_LOG("Found " << m_AllIslands.size() << " total islands");
     }
 
     void IslandManager::FloodFill(ECS::EntityID startBody, Island& island)
@@ -282,20 +280,71 @@ namespace Nyon::Physics
 
     void IslandManager::WakeSleepingIslands()
     {
-        // Move islands that should be awake from sleeping to awake list
-        auto it = m_SleepingIslands.begin();
-        while (it != m_SleepingIslands.end())
+        for (auto& island : m_AllIslands)
         {
-            if (it->isAwake)
+            if (!island.isAwake)
             {
-                m_AwakeIslands.push_back(std::move(*it));
-                it = m_SleepingIslands.erase(it);
-                NYON_DEBUG_LOG("Waking up island with " << m_AwakeIslands.back().bodyIds.size() << " bodies");
+                // Check if any body in this island has active contacts or was disturbed
+                bool shouldWake = false;
+                for (const auto& bodyId : island.bodyIds)
+                {
+                    // Wake if body has active contacts this frame
+                    if (m_ContactGraph.find(bodyId) != m_ContactGraph.end())
+                    {
+                        shouldWake = true;
+                        break;
+                    }
+                    // Wake if body's previous state has been cleared (body newly created or state unknown)
+                    if (m_BodySleepState.find(bodyId) == m_BodySleepState.end())
+                    {
+                        shouldWake = true;
+                        break;
+                    }
+                }
+                
+                if (shouldWake)
+                {
+                    island.isAwake = true;
+                    island.sleepTimer = 0.0f;
+                }
+            }
+        }
+    }
+
+    void IslandManager::RestoreIslandSleepState(Island& island)
+    {
+        // Restore sleep timer and awake state from previous frame's per-body state.
+        // Take the maximum sleep timer from all bodies in the island (conservative),
+        // and wake if any body was awake.
+        float maxSleepTimer = 0.0f;
+        bool anyAwake = false;
+        bool anyUnknown = false;
+        
+        for (const auto& bodyId : island.bodyIds)
+        {
+            auto it = m_BodySleepState.find(bodyId);
+            if (it != m_BodySleepState.end())
+            {
+                maxSleepTimer = std::max(maxSleepTimer, it->second.first);
+                if (it->second.second)
+                    anyAwake = true;
             }
             else
             {
-                ++it;
+                anyUnknown = true;
             }
+        }
+        
+        // If any body was awake or is newly created, the island is awake
+        if (anyAwake || anyUnknown)
+        {
+            island.isAwake = true;
+            island.sleepTimer = 0.0f;
+        }
+        else
+        {
+            island.isAwake = false;
+            island.sleepTimer = maxSleepTimer;
         }
     }
 
@@ -375,9 +424,12 @@ namespace Nyon::Physics
         if (m_ComponentStore.HasComponent<ECS::ColliderComponent>(bodyId))
         {
             const auto& collider = m_ComponentStore.GetComponent<ECS::ColliderComponent>(bodyId);
-            // Get approximate extent from collider bounds
-            // extent = collider.localAABB.upperBound.Distance(collider.localAABB.lowerBound) * 0.5f;
-            // TODO: Calculate extent based on shape type and size
+            // Calculate extent from collider AABB half-diagonal
+            Math::Vector2 aabbMin, aabbMax;
+            collider.CalculateAABB(Math::Vector2{0.0f, 0.0f}, 0.0f, aabbMin, aabbMax);
+            Math::Vector2 diag = aabbMax - aabbMin;
+            extent = std::max(diag.x, diag.y) * 0.5f;
+            if (extent < 0.1f) extent = 1.0f;
         }
         
         // Combined linear and angular velocity metric
@@ -412,8 +464,6 @@ namespace Nyon::Physics
     {
         Statistics stats;
         stats.totalIslands = m_AllIslands.size();
-        stats.awakeIslands = m_AwakeIslands.size();
-        stats.sleepingIslands = m_SleepingIslands.size();
         
         for (const auto& island : m_AllIslands)
         {

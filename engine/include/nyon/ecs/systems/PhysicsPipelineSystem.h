@@ -7,8 +7,13 @@
 #include "nyon/ecs/components/TransformComponent.h"
 #include "nyon/physics/Island.h"
 #include "nyon/physics/DynamicTree.h"
+#include "nyon/physics/ContactTypes.h"
+#include "nyon/utils/ThreadPool.h"
+#include "nyon/EngineConstants.h"
 #include <vector>
 #include <unordered_map>
+#include <future>
+#include <atomic>
 
 namespace Nyon::ECS
 {
@@ -61,8 +66,8 @@ namespace Nyon::ECS
         const Statistics& GetStatistics() const { return m_Stats; }
         
     private:
-        // Contact and constraint structures
-        struct ContactPoint
+        // Velocity constraint structure with solver-only data
+        struct ContactPointConstraint
         {
             Math::Vector2 position;          // World contact position
             Math::Vector2 normal;            // Contact normal (from A to B)
@@ -71,24 +76,15 @@ namespace Nyon::ECS
             float tangentImpulse;            // Accumulated tangent impulse
             float normalMass;                // Normal constraint mass
             float tangentMass;               // Tangent constraint mass
-            float velocityBias;              // Velocity bias for restitution
+            float velocityBias;              // Velocity bias for restitution (solver-only)
             uint32_t featureId;              // Feature identifier for persistence
-        };
-        
-        struct ContactManifold
-        {
-            std::vector<ContactPoint> points; // Contact points
-            Math::Vector2 normal;             // Manifold normal
-            uint32_t entityIdA;               // First entity
-            uint32_t entityIdB;               // Second entity
-            bool persisted = false;           // Whether this contact persisted from previous frame
         };
         
         struct VelocityConstraint
         {
             Math::Vector2 normal;                           // Contact normal
             Math::Vector2 tangent;                          // Contact tangent
-            std::vector<ContactPoint> points;               // Contact points with constraint data
+            std::vector<ContactPointConstraint> points;     // Contact points with constraint data
             uint32_t indexA;                                // Body A index in solver arrays
             uint32_t indexB;                                // Body B index in solver arrays
             float friction;                                 // Combined friction
@@ -114,6 +110,8 @@ namespace Nyon::ECS
             bool isStatic;                                  // Whether body is static
             bool isAwake;                                   // Whether body is awake
             ECS::EntityID entityId;                         // Associated entity ID
+            float linearDamping;                            // Linear damping coefficient (from drag)
+            float angularDamping;                           // Angular damping coefficient
         };
         
         // Pipeline phases
@@ -121,17 +119,24 @@ namespace Nyon::ECS
         void NarrowPhaseDetection();
         void IslandDetection();
         void ConstraintInitialization();
-        void VelocitySolving();
-        void PositionSolving();
+        void VelocitySolving(float dt);
+        void PositionSolving(float dt);
         void Integration();
         void StoreImpulses();
         void UpdateSleeping();
+        
+        // Multi-threaded helpers
+        void ParallelBroadPhase();
+        void ParallelNarrowPhase();
+        void ParallelVelocitySolving(float subStepDt);
+        void ParallelPositionSolving(float subStepDt);
         
         // Broad phase helpers
         struct BroadPhaseCallback : public Physics::ITreeQueryCallback
         {
             PhysicsPipelineSystem* system;
             uint32_t entityId;
+            std::vector<std::pair<uint32_t, uint32_t>>* localPairs = nullptr;
             
             bool QueryCallback(uint32_t nodeId, uint32_t userData) override;
         };
@@ -141,7 +146,7 @@ namespace Nyon::ECS
         
         // Collision detection helpers
         bool TestCollision(uint32_t entityIdA, uint32_t entityIdB);
-        ContactManifold GenerateManifold(uint32_t entityIdA, uint32_t entityIdB);
+        ECS::ContactManifold GenerateManifold(uint32_t entityIdA, uint32_t entityIdB);
         Math::Vector2 ComputeClosestPoint(const Math::Vector2& point, 
                                         const Math::Vector2& min, const Math::Vector2& max);
         
@@ -154,12 +159,12 @@ namespace Nyon::ECS
         void SolvePositionConstraints();
         void WarmStartConstraints();
         void IntegrateVelocities(float dt);
+        void IntegrateVelocities(float dt, size_t start, size_t end);  // Parallel version
         void IntegratePositions(float dt);
         
         // Utility methods
         void PrepareBodiesForUpdate();
         void UpdateTransformsFromSolver();
-        void ClearPersistentContacts();
         
         // Component references
         ComponentStore* m_ComponentStore = nullptr;
@@ -175,9 +180,8 @@ namespace Nyon::ECS
         std::vector<std::pair<uint32_t, uint32_t>> m_BroadPhasePairs;
         
         // Contact management
-        std::vector<ContactManifold> m_ContactManifolds;
+        std::vector<ECS::ContactManifold> m_ContactManifolds;
         std::unordered_map<uint64_t, size_t> m_ContactMap; // entityId pair -> manifold index
-        std::vector<bool> m_ContactPersisted; // Tracks which contacts persisted
         
         // Impulse cache for warm starting (keyed by entity pair + feature ID)
         struct ImpulseData
@@ -196,11 +200,11 @@ namespace Nyon::ECS
         std::unordered_map<uint32_t, size_t> m_EntityToSolverIndex;
         std::vector<VelocityConstraint> m_VelocityConstraints;
         
-        // Timing
-        float m_Accumulator = 0.0f;
+        // Note: Fixed timestep accumulation is managed by Application::Run()
+        // Physics updates run at FIXED_TIMESTEP (60 FPS) with sub-stepping for high speeds
         
-        // Constants
-        static constexpr float FIXED_TIMESTEP = 1.0f / 60.0f; // 60 FPS physics
-        static constexpr float MAX_TIMESTEP = 0.25f;          // Maximum time step
+        // Multi-threading
+        bool m_UseMultiThreading = true;
+        size_t m_NumThreads = 0;
     };
 }
