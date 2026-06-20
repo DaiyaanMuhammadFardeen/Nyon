@@ -1,8 +1,5 @@
 #include "TowerStackDemo.h"
-
-int main()
-{
+int main() {
     TowerStackDemo game;
     game.Run();
-    return 0;
-}
+    return 0; }

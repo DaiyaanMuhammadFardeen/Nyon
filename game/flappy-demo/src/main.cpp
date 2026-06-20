@@ -1,8 +1,5 @@
 #include "FlappyDemo.h"
-
-int main()
-{
+int main() {
     FlappyDemo game;
     game.Run();
-    return 0;
-}
+    return 0; }

@@ -1,8 +1,5 @@
 #include "BreakoutDemo.h"
-
-int main()
-{
+int main() {
     BreakoutDemo demo;
     demo.Run();
-    return 0;
-}
+    return 0; }
