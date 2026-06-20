@@ -1,6 +1,6 @@
 ## Nyon Engine Tutorials
 
-Welcome to the Nyon 2D physics and game engine tutorial series. These guides walk you through creating your own game or physics demo on top of the engine.
+Welcome to the Nyon 2D physics and game engine tutorial series. These guides walk you through creating your own game or physics demo using the engine.
 
 ### Who this is for
 
@@ -14,19 +14,25 @@ Read the documents in this order:
 1. **`01-project-setup.md`** – Create a new game target, hook it into CMake, and run a blank window.
 2. **`02-ecs-basics-and-entities.md`** – Learn how `ECSApplication`, entities, and components (like `TransformComponent`) fit together.
 3. **`03-physics-and-collisions.md`** – Add `PhysicsWorldComponent`, `PhysicsBodyComponent`, and `ColliderComponent` to simulate rigid bodies.
-4. **`04-rendering-and-debug-views.md`** – Render your world using the built–in render system and `Renderer2D`, plus physics debug overlays.
-5. **`05-input-and-gameplay-loop.md`** – Use `InputManager` and the update hooks to implement gameplay.
-6. **`06-building-a-simple-physics-demo.md`** – A complete worked example: a falling–boxes physics playground.
+4. **`04-rendering-and-debug-views.md`** – Render entities using `RenderComponent`, `RenderSystem`, and `DebugRenderSystem`, plus custom drawing with `Renderer2D`.
+5. **`05-input-and-gameplay-loop.md`** – Use `InputManager` and the ECS update hooks to implement gameplay.
+6. **`06-building-a-simple-physics-demo.md`** – A complete worked example: a falling-boxes physics playground.
 
 You can skim or skip sections if you are already familiar with ECS or CMake, but following the order once is recommended.
 
-### High–level architecture (quick recap)
+### High-level architecture (quick recap)
 
-- **Application layer**: `Nyon::Application` manages the window and the fixed–timestep game loop with interpolation.
-- **ECS layer**: `Nyon::ECSApplication` extends `Application` with `EntityManager`, `ComponentStore`, and `SystemManager`.
-- **Physics**: `PhysicsWorldComponent`, `PhysicsBodyComponent`, `ColliderComponent`, and physics systems handle simulation and collisions.
-- **Rendering**: `RenderSystem` and `Renderer2D` draw entities and debug information, using an orthographic camera.
-- **Input**: `InputSystem` and `Utils::InputManager` provide keyboard and mouse helpers.
+- **Application layer**: `Nyon::Application` manages the GLFW window and the fixed-timestep game loop with interpolation.
+- **ECS layer**: `Nyon::ECSApplication` extends `Application` with an `EntityManager`, `ComponentStore`, and `SystemManager`. Provides `OnECSStart()`, `OnECSUpdate()`, and `OnECSFixedUpdate()` hooks.
+- **Physics**: `PhysicsWorldComponent`, `PhysicsBodyComponent`, `ColliderComponent`, and the `PhysicsPipelineSystem` handle simulation and collision detection.
+- **Rendering**: `RenderSystem` draws all entities with `RenderComponent` and `TransformComponent`. `DebugRenderSystem` visualizes physics shapes and contacts. `Renderer2D` provides raw shape-drawing commands.
+- **Input**: `Nyon::Utils::InputManager` provides static keyboard and mouse helpers via GLFW.
 
-Each tutorial document points to concrete APIs and gives small but realistic code snippets you can copy into your own project.
+### Coordinate system
 
+- **Y-positive is up** (OpenGL-style orthographic projection).
+- World origin is at the bottom-left corner of the screen.
+- Camera position `{640, 360}` centers the view on a 1280×720 window.
+- Physics uses the same units as rendering (pixels). Gravity is `{0, -980}` pixels/s².
+
+Each tutorial points to concrete APIs and gives small but realistic code snippets you can copy into your own project.
